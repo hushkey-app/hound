@@ -10,15 +10,21 @@ export class StreamReader {
   private readonly streamdb: RedisConnection;
   private readonly group: string;
   private readonly consumerId: string;
+  private readonly streamMaxLen?: number;
+  private readonly readCount: number;
 
   constructor(
     streamdb: RedisConnection,
     group: string,
     consumerId: string,
+    streamMaxLen?: number,
+    readCount: number = 200,
   ) {
     this.streamdb = streamdb;
     this.group = group;
     this.consumerId = consumerId;
+    this.streamMaxLen = streamMaxLen;
+    this.readCount = readCount;
   }
 
   /**
@@ -46,16 +52,18 @@ export class StreamReader {
    */
   async readQueueStream(
     queueName: string,
-    count: number = 200,
     block: number = 5000,
   ): Promise<Message[]> {
+    const streamKey = `${queueName}-stream`;
+    const count = this.readCount;
+
     // Ensure consumer group exists before reading
-    await this.ensureConsumerGroup(`${queueName}-stream`);
+    await this.ensureConsumerGroup(streamKey);
 
     try {
       // First try to claim any pending messages (like old worker line 661-692)
       const pendingMessages = await this.streamdb.xpending(
-        `${queueName}-stream`,
+        streamKey,
         this.group,
         '-',
         '+',
@@ -77,7 +85,7 @@ export class StreamReader {
         if (claimIds.length) {
           // Redis xclaim expects individual message IDs, not an array (like old worker line 684-690)
           await this.streamdb.xclaim(
-            `${queueName}-stream`,
+            streamKey,
             this.group,
             this.consumerId,
             30000, // Min idle time (like old worker line 688)
@@ -96,7 +104,7 @@ export class StreamReader {
         'BLOCK',
         block,
         'STREAMS',
-        `${queueName}-stream`,
+        streamKey,
         '>', // Only new messages
       ) as [string, [string, string]][];
 
@@ -109,10 +117,19 @@ export class StreamReader {
       // Acknowledge processed messages immediately (like old worker line 714-720)
       const messageIds = jobs[0][1].map(([id]) => id);
       await this.streamdb.xack(
-        `${queueName}-stream`,
+        streamKey,
         this.group,
         ...messageIds,
       );
+
+      // Self-clean: trim stream so it doesn't grow unbounded (prevents memory blowup)
+      if (this.streamMaxLen != null && this.streamMaxLen > 0) {
+        try {
+          await this.streamdb.call('XTRIM', streamKey, 'MAXLEN', '~', this.streamMaxLen);
+        } catch (trimErr) {
+          console.warn('[remq] Stream XTRIM failed (non-fatal):', trimErr);
+        }
+      }
 
       return processedMessages;
     } catch (error) {

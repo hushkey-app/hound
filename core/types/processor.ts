@@ -125,4 +125,17 @@ export interface ProcessorOptions {
    * @default true
    */
   ignoreConfigErrors?: boolean;
+
+  /**
+   * Max stream length per queue stream. After each read+ACK, stream is trimmed to this length (XTRIM MAXLEN ~).
+   * Prevents unbounded stream growth and memory blowup.
+   * @default undefined (no trim)
+   */
+  streamMaxLen?: number;
+
+  /**
+   * Max messages to read per XREADGROUP batch. Lower for large payloads to avoid process memory spikes.
+   * @default 200
+   */
+  readCount?: number;
 }

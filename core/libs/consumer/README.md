@@ -123,6 +123,11 @@ await consumer.waitForActiveTasks(); // Wait for in-flight messages
 - `concurrency-pool.ts` - Simple concurrency limiting
 - `mod.ts` - Exports
 
+### Stream trimming and memory
+
+- **`streamMaxLen`**: When set (e.g. via TaskManager `processor.streamMaxLen`), the consumer trims the stream (XTRIM MAXLEN ~) after each read+ACK so the stream self-cleans. Prevents unbounded stream growth and process memory blowup.
+- **`read.count`**: Max messages per XREADGROUP batch (default 200). Lower this if message payloads are large to avoid process memory spikes.
+
 ## Integration with Higher Layers
 
 The Consumer is designed to be used by a Processor layer that handles:

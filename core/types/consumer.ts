@@ -65,10 +65,17 @@ export interface ConsumerOptions {
      */
     blockMs?: number;
     /**
-     * Maximum number of messages to read at once
-     * @default 100
+     * Maximum number of messages to read at once. Lower for large payloads to avoid process memory spikes.
+     * @default 200
      */
     count?: number;
   };
+
+  /**
+   * Max stream length per queue stream. After each read+ACK, stream is trimmed (XTRIM MAXLEN ~).
+   * Prevents unbounded stream growth and memory blowup.
+   * @default undefined (no trim)
+   */
+  streamMaxLen?: number;
 }
 

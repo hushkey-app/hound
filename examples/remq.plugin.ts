@@ -25,7 +25,9 @@ streamdb.on(
 );
 
 // define the context for the app SAMPLE you pass your own context to the tasker so it will be always available, otherwise it will be undefined
-const contextApp = {};
+const contextApp = {
+  foo: 'bar',
+};
 
 // initialize the task manager (using new core API)
 const remq = TaskManager.init({
@@ -48,6 +50,8 @@ const remq = TaskManager.init({
       // shouldRetry: (error, attempt) => true,
     },
     maxLogsPerTask: 100, // trim oldest logs; keeps Redis self-cleaning
+    streamMaxLen: 1000, // trim stream after each read+ACK to prevent unbounded growth and process memory blowup
+    // readCount: 50, // optional: lower if message payloads are large (default 200)
   },
 });
 

@@ -49,6 +49,8 @@ export class Consumer extends EventTarget {
       this.streamdb,
       this.group,
       this.consumerId,
+      options.streamMaxLen,
+      options.read?.count ?? 200,
     );
   }
 

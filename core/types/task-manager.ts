@@ -89,7 +89,7 @@ export interface TaskManagerOptions<T = unknown> {
   streamdb?: RedisConnection;
 
   /**
-   * Processor options (retry, DLQ, debounce, maxLogsPerTask)
+   * Processor options (retry, DLQ, debounce, maxLogsPerTask, stream trim, read count)
    */
   processor?: {
     retry?: ProcessorOptions['retry'];
@@ -101,6 +101,17 @@ export interface TaskManagerOptions<T = unknown> {
      * @default undefined (no limit)
      */
     maxLogsPerTask?: number;
+    /**
+     * Max stream length per queue stream. After each read+ACK, trims the stream to this length (approximate).
+     * Prevents unbounded stream growth and memory blowup. Set to e.g. 10000 for production.
+     * @default undefined (no trim; stream grows until Redis eviction or manual trim)
+     */
+    streamMaxLen?: number;
+    /**
+     * Max messages to read per XREADGROUP batch. Lower this if message payloads are large to avoid process memory spikes.
+     * @default 200
+     */
+    readCount?: number;
   };
 }
 

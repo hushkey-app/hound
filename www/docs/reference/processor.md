@@ -30,6 +30,8 @@ Optional:
 - `dlq?: DLQConfig` - Dead Letter Queue policy (`streamKey`, `shouldSendToDLQ`).
 - `debounce?: number | DebounceConfig` - Debounce window in milliseconds; number is shorthand for `{ debounce }`.
 - `ignoreConfigErrors?: boolean` - Stored on the Processor instance. Default `true`.
+- `streamMaxLen?: number` - After each read+ACK, trim the queue stream to this length (XTRIM MAXLEN ~). Prevents unbounded stream growth and process memory blowup. Recommended in production (e.g. `10000`).
+- `readCount?: number` - Max messages per XREADGROUP batch (default `200`). Lower for large payloads to avoid process memory spikes.
 
 #### RetryConfig
 

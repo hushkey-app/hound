@@ -201,11 +201,11 @@ These patterns can stress or crash a Redis container if left unbounded. Mitigate
 
 | Risk | Cause | Mitigation |
 |------|--------|------------|
-| **Unbounded stream growth** | Queue streams and DLQ stream use `XADD` with no cap. Under high or long-running load, stream length and memory grow forever. | Set Redis `maxmemory` and eviction policy, and/or periodically trim streams (e.g. `XTRIM key MAXLEN ~ 10000`). Consider capping queue/DLQ streams if you add a config option. |
+| **Unbounded stream growth / process memory blowup** | Queue streams use `XADD` with no cap; consumer reads in batches. Unbounded streams can cause Redis and process memory to spike (e.g. 130MB → 3GB). | **Set `processor.streamMaxLen`** (e.g. `10000`). After each read+ACK the stream is trimmed (XTRIM MAXLEN ~), so the stream self-cleans. Optionally lower `processor.readCount` (default 200) if message payloads are large. |
 | **Unbounded log keys** | When `maxLogsPerTask` is **not** set, each `task.logger()` call creates a Redis key `queues:queue:taskId:logs:uuid` and they are never deleted. | **Always set `processor.maxLogsPerTask`** (e.g. `100`) in production so logs live only in the task blob and per-log keys are not written. |
 | **Accumulation of completed/failed keys** | `queues:queueName:taskId:completed` and `queues:queueName:taskId:failed` are never deleted. Key count grows with every finished task. | Accept for moderate volume, or add a TTL/background cleanup for old completed/failed keys (e.g. SDK or cron). |
 
-**Recommended for production:** set `processor.maxLogsPerTask`, use Redis `maxmemory` + eviction, and monitor stream lengths and key count.
+**Recommended for production:** set `processor.maxLogsPerTask`, **`processor.streamMaxLen`** (e.g. `10000`), use Redis `maxmemory` + eviction, and monitor stream lengths and key count. If you see process memory spikes when loading remq, enable `streamMaxLen` and consider lowering `readCount` for large payloads.
 
 ---
 
@@ -238,6 +238,7 @@ const tm = TaskManager.init({
       shouldSendToDLQ: (_, __, attempts) => attempts >= 3,
     },
     maxLogsPerTask: 100,
+    streamMaxLen: 10000, // trim stream after each batch to avoid memory blowup
   },
 });
 

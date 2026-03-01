@@ -687,6 +687,10 @@ export class TaskManager<T = unknown> {
         handler: unifiedMessageHandler,
         concurrency: this.concurrency,
         group: 'processor',
+        streamMaxLen: this.processorOptions?.streamMaxLen,
+        read: {
+          count: this.processorOptions?.readCount ?? 200,
+        },
       },
       streamdb: this.streamdb,
       ...this.processorOptions,

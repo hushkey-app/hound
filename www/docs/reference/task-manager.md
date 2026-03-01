@@ -52,7 +52,7 @@ const taskManager = TaskManager.init({
 - `streamdb`: Optional Redis connection for stream operations (defaults to `db`).
 - `ctx`: Context object merged into handler context.
 - `concurrency`: Number of concurrent jobs (defaults to `1`).
-- `processor`: Processor options forwarded to the internal Processor.
+- `processor`: Processor options forwarded to the internal Processor. For production, set `streamMaxLen` (e.g. `10000`) so queue streams are trimmed after each batch and do not grow unbounded; optionally set `readCount` lower if message payloads are large.
 
 ## Handler registration
 
