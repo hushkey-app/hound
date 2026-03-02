@@ -1,6 +1,6 @@
 # Remq
 
-High-level API for task/job management. Simple, developer-friendly interface built on top of Consumer + Processor.
+High-level API for job management. Simple, developer-friendly interface built on top of Consumer + Processor.
 
 ## Features
 
@@ -123,11 +123,11 @@ Create or retrieve the singleton Remq instance.
 
 ### `on(event, handler, options?)`
 
-Register a handler for an event/task. Sync, returns `this` for chaining. Event names support dot notation (e.g. `'host.sync'`, `'user.welcome'`).
+Register a handler for an event/job. Sync, returns `this` for chaining. Event names support dot notation (e.g. `'host.sync'`, `'user.welcome'`).
 
 **Parameters:**
 
-- `event: string` - Event/task name
+- `event: string` - Event/job name
 - `handler: TaskHandler<TApp, D>` - Handler function receiving single `ctx: TaskContext<TApp, D>`
 - `options?: HandlerOptions` - `{ queue?, repeat?, attempts?, debounce? }`
 
@@ -141,7 +141,7 @@ Register a handler for an event/task. Sync, returns `this` for chaining. Event n
 
 ### `emit(event, data?, options?)`
 
-Emit/trigger a task/event. Returns job id.
+Emit/trigger a job/event. Returns job id.
 
 **Parameters:**
 
@@ -212,7 +212,7 @@ Options for `Remq.create()`.
 **Parameters:**
 
 - `db: RedisConnection` - Redis connection for job storage (required)
-- `expose?: number` - Port to expose a task-manager API (default: `4000`)
+- `expose?: number` - Port to expose a job-manager API (default: `4000`)
 - `ctx?: T` - Context object passed to handlers
 - `concurrency?: number` - Number of concurrent jobs (default: `1`)
 - `streamdb?: RedisConnection` - Optional Redis connection for streams (defaults to `db`)

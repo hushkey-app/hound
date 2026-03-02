@@ -1,10 +1,10 @@
 /**
  * Core V2 - Main exports
  *
- * High-level API for task/job management
+ * High-level API for job management
  */
 
-export { Remq } from './libs/task-manager/mod.ts';
+export { Remq } from './libs/remq/mod.ts';
 export type {
   EmitFunction,
   EmitOptions,

@@ -1,4 +1,4 @@
-import { remq } from './remq.plugin.ts';
+import { admin, remq } from './remq.plugin.ts';
 
 const TOTAL_JOBS = 1000;
 const SIMULATED_WORK_MS = 0; // change to 50 or 100 to simulate heavier I/O

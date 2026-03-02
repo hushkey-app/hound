@@ -94,7 +94,7 @@ const cancelled = await admin.cancelJob('job-id-123', 'default');
 ### Pause / Resume
 
 ```typescript
-await admin.pause('default');  // or admin.pause() to pause all queues
+await admin.pause('default'); // or admin.pause() to pause all queues
 await admin.resume('default'); // or admin.resume() to resume all queues
 const isPaused = await admin.isPaused('default');
 ```
@@ -116,7 +116,7 @@ const unsubscribe = admin.onJobFinished((payload) => {
 Use `RemqAdmin` alongside Remq for admin or external clients:
 
 ```typescript
-import { RemqAdmin, Remq } from '@core/mod.ts';
+import { Remq, RemqAdmin } from '@core/mod.ts';
 
 const remq = Remq.create({ db, streamdb, ctx: {}, concurrency: 4 });
 const admin = new RemqAdmin(db);
@@ -129,4 +129,4 @@ await admin.deleteJob(id, queue);
 
 ## Types
 
-Exported from `@core/mod.ts`: `Job`, `Task` (alias of `Job`), `ListOptions`, `QueueStats`, `QueueInfo`.
+Exported from `@core/mod.ts`: `Job`, `Job` (alias of `Job`), `ListOptions`, `QueueStats`, `QueueInfo`.

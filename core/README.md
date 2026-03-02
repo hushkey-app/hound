@@ -1,19 +1,19 @@
 # Core API
 
-Main modules for task/job processing with Redis Streams.
+Main modules for job processing with Redis Streams.
 
 ## API list
 
-### Remq (`libs/task-manager/remq.ts`)
+### Remq (`libs/job-manager/remq.ts`)
 
-| Method     | Signature                                                                  |
-| ---------- | -------------------------------------------------------------------------- |
-| `create`   | `static create<TApp>(options): Remq<TApp>`                                 |
-| `on`       | `on(event, handler, options?): this` (sync, fluent)                        |
-| `emit`     | `emit(event, data?, options?): string` (returns task id; queue in options) |
-| `start`    | `start(): Promise<void>`                                                   |
-| `stop`     | `stop(): Promise<void>`                                                    |
-| `drain`    | `drain(): Promise<void>` — wait for active tasks to finish                 |
+| Method   | Signature                                                                 |
+| -------- | ------------------------------------------------------------------------- |
+| `create` | `static create<TApp>(options): Remq<TApp>`                                |
+| `on`     | `on(event, handler, options?): this` (sync, fluent)                       |
+| `emit`   | `emit(event, data?, options?): string` (returns job id; queue in options) |
+| `start`  | `start(): Promise<void>`                                                  |
+| `stop`   | `stop(): Promise<void>`                                                   |
+| `drain`  | `drain(): Promise<void>` — wait for active tasks to finish                |
 
 ### Consumer (`libs/consumer/`)
 
@@ -29,44 +29,44 @@ Main modules for task/job processing with Redis Streams.
 
 ### Processor (`libs/processor/`)
 
-| Class / Method                 | Description                                                              |
-| ------------------------------ | ------------------------------------------------------------------------ |
-| `processor.maxLogsPerTask`     | Trim oldest logs per task; keeps Redis self-cleaning (default: no limit) |
-| `Processor`                    | Policy layer wrapping Consumer                                           |
-| `Processor.constructor`        | `(options: ProcessorOptions)`                                            |
-| `Processor.start`              | `start(options?): Promise<void>`                                         |
-| `Processor.stop`               | `stop(): void`                                                           |
-| `Processor.waitForActiveTasks` | `waitForActiveTasks(): Promise<void>`                                    |
-| `Processor.cleanup`            | `cleanup(): void`                                                        |
-| `DebounceManager`              | Per-handler debouncing                                                   |
+| Class / Method                 | Description                                                             |
+| ------------------------------ | ----------------------------------------------------------------------- |
+| `processor.maxLogsPerTask`     | Trim oldest logs per job; keeps Redis self-cleaning (default: no limit) |
+| `Processor`                    | Policy layer wrapping Consumer                                          |
+| `Processor.constructor`        | `(options: ProcessorOptions)`                                           |
+| `Processor.start`              | `start(options?): Promise<void>`                                        |
+| `Processor.stop`               | `stop(): void`                                                          |
+| `Processor.waitForActiveTasks` | `waitForActiveTasks(): Promise<void>`                                   |
+| `Processor.cleanup`            | `cleanup(): void`                                                       |
+| `DebounceManager`              | Per-handler debouncing                                                  |
 
 ### RemqAdmin (`libs/sdk/`)
 
-| Method          | Description                                                |
-| --------------- | ---------------------------------------------------------- |
-| `getJob`        | `getJob(jobId, queue): Promise<Job \| null>`               |
-| `listJobs`      | `listJobs(options?): Promise<Job[]>`                       |
-| `deleteJob`     | `deleteJob(jobId, queue): Promise<void>`                   |
-| `retryJob`      | `retryJob(jobId, queue): Promise<Job \| null>`              |
-| `cancelJob`     | `cancelJob(jobId, queue): Promise<boolean>`                |
-| `getQueueStats` | `getQueueStats(queue): Promise<QueueStats>`                 |
-| `getQueues`     | `getQueues(): Promise<string[]>`                            |
-| `getQueuesInfo` | `getQueuesInfo(): Promise<QueueInfo[]>`                     |
-| `pause`         | `pause(queue?): Promise<void>`                            |
-| `resume`        | `resume(queue?): Promise<void>`                            |
-| `isPaused`      | `isPaused(queue): Promise<boolean>`                        |
+| Method          | Description                                                          |
+| --------------- | -------------------------------------------------------------------- |
+| `getJob`        | `getJob(jobId, queue): Promise<Job \| null>`                         |
+| `listJobs`      | `listJobs(options?): Promise<Job[]>`                                 |
+| `deleteJob`     | `deleteJob(jobId, queue): Promise<void>`                             |
+| `retryJob`      | `retryJob(jobId, queue): Promise<Job \| null>`                       |
+| `cancelJob`     | `cancelJob(jobId, queue): Promise<boolean>`                          |
+| `getQueueStats` | `getQueueStats(queue): Promise<QueueStats>`                          |
+| `getQueues`     | `getQueues(): Promise<string[]>`                                     |
+| `getQueuesInfo` | `getQueuesInfo(): Promise<QueueInfo[]>`                              |
+| `pause`         | `pause(queue?): Promise<void>`                                       |
+| `resume`        | `resume(queue?): Promise<void>`                                      |
+| `isPaused`      | `isPaused(queue): Promise<boolean>`                                  |
 | `onJobFinished` | `onJobFinished(cb): () => void` (requires `new RemqAdmin(db, remq)`) |
-| `pauseJob`      | `pauseJob(jobId, queue): Promise<Job \| null>`              |
-| `resumeJob`     | `resumeJob(jobId, queue): Promise<Job \| null>`             |
+| `pauseJob`      | `pauseJob(jobId, queue): Promise<Job \| null>`                       |
+| `resumeJob`     | `resumeJob(jobId, queue): Promise<Job \| null>`                      |
 
 ### Types
 
-| Type                                                                                                                  | Module                  |
-| --------------------------------------------------------------------------------------------------------------------- | ----------------------- |
-| `TaskManagerOptions`, `TaskHandler`, `TaskContext`, `EmitFunction`, `EmitOptions`, `HandlerOptions`, `UpdateFunction` | `types/task-manager.ts` |
-| `ConsumerOptions`, `Message`, `MessageHandler`, `MessageContext`, `ConsumerEvents`                                    | `types/`                |
-| `ProcessorOptions`, `ProcessableMessage`, `RetryConfig`, `DLQConfig`, `DebounceConfig`                                | `types/processor.ts`    |
-| `Job`, `Task`, `ListOptions`, `QueueStats`, `QueueInfo`                                                                 | `types/admin.ts`        |
+| Type                                                                                                                  | Module                 |
+| --------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| `TaskManagerOptions`, `TaskHandler`, `TaskContext`, `EmitFunction`, `EmitOptions`, `HandlerOptions`, `UpdateFunction` | `types/job-manager.ts` |
+| `ConsumerOptions`, `Message`, `MessageHandler`, `MessageContext`, `ConsumerEvents`                                    | `types/`               |
+| `ProcessorOptions`, `ProcessableMessage`, `RetryConfig`, `DLQConfig`, `DebounceConfig`                                | `types/processor.ts`   |
+| `Job`, `Job`, `ListOptions`, `QueueStats`, `QueueInfo`                                                                | `types/admin.ts`       |
 
 ---
 
@@ -74,19 +74,19 @@ Main modules for task/job processing with Redis Streams.
 
 Retry behavior depends on options at two levels. Both must allow retries.
 
-### Per-task level (`emit` / `on` options)
+### Per-job level (`emit` / `on` options)
 
-| Option                     | Role                                                         |
-| -------------------------- | ------------------------------------------------------------ |
-| `attempts` or `retryCount` | Number of retries for this task (use one; they are the same) |
-| `retryDelayMs`             | Delay before each retry (ms)                                 |
+| Option                     | Role                                                        |
+| -------------------------- | ----------------------------------------------------------- |
+| `attempts` or `retryCount` | Number of retries for this job (use one; they are the same) |
+| `retryDelayMs`             | Delay before each retry (ms)                                |
 
 ### Processor level (`processor.retry`)
 
 | Option         | Role                                                                                                                                   |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `maxRetries`   | Global switch: retries happen only if > 0                                                                                              |
-| `retryDelayMs` | Default delay before retries (overridden by per-task `retryDelayMs`)                                                                   |
+| `retryDelayMs` | Default delay before retries (overridden by per-job `retryDelayMs`)                                                                    |
 | `shouldRetry`  | `(error: Error, attempt: number) => boolean` — filter which errors to retry; return `false` to skip retry (e.g. for validation errors) |
 
 ### Common mistakes
@@ -97,13 +97,13 @@ Retry behavior depends on options at two levels. Both must allow retries.
 
 ### How the combo works
 
-1. Task fails → processor checks `retryCount > 0` and `maxRetries > 0`.
+1. Job fails → processor checks `retryCount > 0` and `maxRetries > 0`.
 2. If both true → calls `shouldRetry(error, attempt)` (if set).
 3. If `shouldRetry` returns false → no retry (may go to DLQ).
 4. Otherwise → retry; `retryCount` is decremented.
 
 ```ts
-// Minimal: processor enables retries, per-task sets count
+// Minimal: processor enables retries, per-job sets count
 processor: { retry: { maxRetries: 5 } },
 on('foo', handler, { attempts: 3 });  // 3 retries
 
@@ -118,11 +118,11 @@ processor: {
 
 ---
 
-## Real-time task updates: `ctx.socket.update` (BETA)
+## Real-time job updates: `ctx.socket.update` (BETA)
 
-When Remq is started with `expose` (WebSocket gateway), tasks triggered over WebSocket can send **progressive updates** to the client. Use `ctx.socket.update(data, progress)` inside a handler to push real-time payloads to the socket that requested the task.
+When Remq is started with `expose` (WebSocket gateway), tasks triggered over WebSocket can send **progressive updates** to the client. Use `ctx.socket.update(data, progress)` inside a handler to push real-time payloads to the socket that requested the job.
 
-- **Who receives updates**: By default, only the client that emitted the task gets `task_update` / `task_retry` / `task_finished` for that task. To receive **all** task updates (e.g. for dashboards), connect with the header **`x-get-broadcast: true`**; that connection will get every `task_update`, `task_retry`, and `task_finished` for any task.
+- **Who receives updates**: By default, only the client that emitted the job gets `task_update` / `task_retry` / `task_finished` for that job. To receive **all** job updates (e.g. for dashboards), connect with the header **`x-get-broadcast: true`**; that connection will get every `task_update`, `task_retry`, and `task_finished` for any job.
 - **Payload**: any JSON-serializable value (object, array, string, number). The client receives `{ type: 'task_update', taskId, data, progress }`.
 
 ### Use cases
@@ -160,12 +160,12 @@ ws.onmessage = (event) => {
     console.log('Retry scheduled:', msg.error, 'retries left:', msg.retryCount);
   }
   if (msg.type === 'task_finished') {
-    console.log('Task done:', msg.status); // only sent when job completes or finally fails (no more retries)
+    console.log('Job done:', msg.status); // only sent when job completes or finally fails (no more retries)
   }
 };
 ```
 
-**Broadcast (all task updates):** Connect with header `x-get-broadcast: true` to receive every `task_update` / `task_retry` / `task_finished` for any task. Example from Node/Deno (browsers cannot set custom WebSocket headers; use a backend or a client that supports it):
+**Broadcast (all job updates):** Connect with header `x-get-broadcast: true` to receive every `task_update` / `task_retry` / `task_finished` for any job. Example from Node/Deno (browsers cannot set custom WebSocket headers; use a backend or a client that supports it):
 
 ```ts
 import { WebSocket } from 'npm:ws'; // or Deno std ws
@@ -178,10 +178,10 @@ const ws = new WebSocket('http://localhost:4000', {
 
 ## Self-cleaning logs: `maxLogsPerTask`
 
-Set `processor.maxLogsPerTask` to cap the number of log entries per task. Oldest logs are trimmed when the limit is exceeded, keeping Redis self-cleaning and preventing unbounded growth.
+Set `processor.maxLogsPerTask` to cap the number of log entries per job. Oldest logs are trimmed when the limit is exceeded, keeping Redis self-cleaning and preventing unbounded growth.
 
 - **Behavior**: When logs exceed the limit, oldest entries are removed (FIFO).
-- **Redis**: When `maxLogsPerTask` is set, individual log keys (`queues:queue:taskId:logs:*`) are not written; logs live only in the task status blob, reducing Redis keys.
+- **Redis**: When `maxLogsPerTask` is set, individual log keys (`queues:queue:taskId:logs:*`) are not written; logs live only in the job status blob, reducing Redis keys.
 
 ```ts
 processor: {
@@ -210,7 +210,7 @@ These patterns can stress or crash a Redis container if left unbounded. Mitigate
 ## Quick init example
 
 ```ts
-import { Remq } from './libs/task-manager/mod.ts';
+import { Remq } from './libs/job-manager/mod.ts';
 import Redis from 'ioredis';
 
 const redisOption = {
@@ -241,7 +241,7 @@ const tm = Remq.create({
   },
 });
 
-// Register handler (ctx.emit for new tasks; ctx.socket.update for real-time WS updates when expose is set — see "Real-time task updates" above)
+// Register handler (ctx.emit for new tasks; ctx.socket.update for real-time WS updates when expose is set — see "Real-time job updates" above)
 tm.on('my-event', async (ctx) => {
   console.log('Processing:', ctx.data);
   ctx.emit('follow-up', { from: ctx.name });

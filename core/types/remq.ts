@@ -2,7 +2,7 @@ import type { RedisConnection } from './index.ts';
 import type { ProcessorOptions } from './processor.ts';
 
 /**
- * Update function – send a progressive update to the client over WebSocket (when task was triggered via WS).
+ * Update function – send a progressive update to the client over WebSocket (when job was triggered via WS).
  */
 export interface UpdateFunction {
   (
@@ -12,8 +12,8 @@ export interface UpdateFunction {
 }
 
 /**
- * Context for the current task's WebSocket (when task was triggered via WS).
- * Use ctx.socket.update() to stream progress to the client; no-op if no socket is tracking this task.
+ * Context for the current job's WebSocket (when job was triggered via WS).
+ * Use ctx.socket.update() to stream progress to the client; no-op if no socket is tracking this job.
  */
 export interface TaskSocketContext {
   update: UpdateFunction;
@@ -34,10 +34,13 @@ export interface EmitOptions {
 }
 
 /**
- * Context passed to task handlers (job identity, payload, and capabilities).
+ * Context passed to job handlers (job identity, payload, and capabilities).
  * App context is merged onto ctx via & TApp.
  */
-export interface TaskContext<TApp extends Record<string, unknown> = Record<string, unknown>, TData = unknown> {
+export interface TaskContext<
+  TApp extends Record<string, unknown> = Record<string, unknown>,
+  TData = unknown,
+> {
   id: string;
   name: string;
   queue: string;
@@ -53,7 +56,10 @@ export interface TaskContext<TApp extends Record<string, unknown> = Record<strin
 /**
  * Handler function signature — single ctx argument with job + app context.
  */
-export type TaskHandler<TApp extends Record<string, unknown> = Record<string, unknown>, TData = unknown> = (
+export type TaskHandler<
+  TApp extends Record<string, unknown> = Record<string, unknown>,
+  TData = unknown,
+> = (
   ctx: TaskContext<TApp, TData>,
 ) => Promise<void> | void;
 
@@ -75,16 +81,16 @@ export interface HandlerOptions {
 }
 
 /**
- * Task Manager options
+ * Job Manager options
  */
 export interface TaskManagerOptions<T = unknown> {
   /**
-   * Redis connection for task storage
+   * Redis connection for job storage
    */
   db: RedisConnection;
 
   /**
-   * Expose port for the WebSocket gateway (enables real-time task updates).
+   * Expose port for the WebSocket gateway (enables real-time job updates).
    */
   expose?: number;
 
@@ -106,7 +112,7 @@ export interface TaskManagerOptions<T = unknown> {
   streamdb?: RedisConnection;
 
   /**
-   * When true, log worker PID and job id when a task is picked up (e.g. for debugging).
+   * When true, log worker PID and job id when a job is picked up (e.g. for debugging).
    * @default false
    */
   debug?: boolean;
@@ -120,7 +126,7 @@ export interface TaskManagerOptions<T = unknown> {
     debounce?: ProcessorOptions['debounce'];
     ignoreConfigErrors?: boolean;
     /**
-     * Max number of log entries to keep per task. Trims oldest entries; keeps Redis self-cleaning.
+     * Max number of log entries to keep per job. Trims oldest entries; keeps Redis self-cleaning.
      * @default undefined (no limit)
      */
     maxLogsPerTask?: number;
@@ -164,4 +170,3 @@ export interface TaskManagerOptions<T = unknown> {
     pollIntervalMs?: number;
   };
 }
-

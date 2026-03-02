@@ -1,5 +1,5 @@
 /**
- * Remq - High-level API for task/job management
+ * Remq - High-level API for job management
  *
  * Simple, developer-friendly API built on top of Consumer + Processor
  */
@@ -116,7 +116,7 @@ export class Remq<
   }
 
   /**
-   * Register a handler for an event/task. Event names support dot notation (e.g. 'host.sync', 'user.welcome').
+   * Register a handler for an event/job. Event names support dot notation (e.g. 'host.sync', 'user.welcome').
    * Returns this for fluent chaining.
    */
   on<D = unknown>(
@@ -159,7 +159,7 @@ export class Remq<
   }
 
   /**
-   * Emit/trigger a task/event. Returns the job id so callers can track completion.
+   * Emit/trigger a job/event. Returns the job id so callers can track completion.
    */
   emit(event: string, data?: unknown, options?: EmitOptions): string {
     const opts = options ?? {};
@@ -295,7 +295,7 @@ export class Remq<
   }
 
   /**
-   * Socket context for the current task. When expose is not set, socket methods throw at runtime.
+   * Socket context for the current job. When expose is not set, socket methods throw at runtime.
    */
   #createSocketContext(
     id: string,
@@ -306,7 +306,7 @@ export class Remq<
       return {
         update: () => {
           throw new Error(
-            'ctx.socket.update() requires Remq to be started with option expose (WebSocket port). Real-time updates are only available when the task was triggered via WebSocket.',
+            'ctx.socket.update() requires Remq to be started with option expose (WebSocket port). Real-time updates are only available when the job was triggered via WebSocket.',
           );
         },
       };
@@ -324,7 +324,7 @@ export class Remq<
   }
 
   /**
-   * Sockets that should receive updates for a task: emitters for this task plus any client that connected with x-get-broadcast: true.
+   * Sockets that should receive updates for a job: emitters for this job plus any client that connected with x-get-broadcast: true.
    */
   #getSocketsForTaskUpdate(taskId: string): Set<WebSocket> {
     const out = new Set<WebSocket>(this.taskIdToSockets.get(taskId) ?? []);
@@ -335,7 +335,7 @@ export class Remq<
   }
 
   /**
-   * Send a progressive update to WebSocket client(s) tracking this task (or all when exposeBroadcast).
+   * Send a progressive update to WebSocket client(s) tracking this job (or all when exposeBroadcast).
    */
   private sendTaskUpdate({
     id,
@@ -372,7 +372,7 @@ export class Remq<
   }
 
   /**
-   * Notify WebSocket client(s) that this task attempt failed and a retry is scheduled (or all when exposeBroadcast).
+   * Notify WebSocket client(s) that this job attempt failed and a retry is scheduled (or all when exposeBroadcast).
    */
   private sendTaskRetry({
     id,
@@ -713,7 +713,7 @@ export class Remq<
   }
 
   /**
-   * Process a task (copied from old worker #processJob - robust logic)
+   * Process a job (copied from old worker #processJob - robust logic)
    */
   private async processJob(
     jobEntry: any, // JobData from message

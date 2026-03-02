@@ -59,6 +59,3 @@ export interface ListOptions {
   limit?: number;
   offset?: number;
 }
-
-/** Alias for Job — use in user-facing APIs and docs (task terminology). */
-export type Task = Job;

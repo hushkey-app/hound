@@ -1,11 +1,15 @@
 import type { ConsumerOptions } from '../../types/consumer.ts';
-import type { Message, MessageContext, ConsumerEvents } from '../../types/message.ts';
+import type {
+  ConsumerEvents,
+  Message,
+  MessageContext,
+} from '../../types/message.ts';
 import { StreamReader } from './stream-reader.ts';
 import { ConcurrencyPool } from './concurrency-pool.ts';
 
 /**
  * Consumer - Runtime engine for processing messages from Redis Streams
- * 
+ *
  * Based on old worker's robust processTasksLoop logic
  */
 export class Consumer extends EventTarget {
@@ -34,7 +38,7 @@ export class Consumer extends EventTarget {
     if (!options.handler) {
       throw new Error('Handler is required');
     }
-    
+
     this.streamdb = options.streamdb;
     this.streams = options.streams;
     this.group = options.group || 'processor';
@@ -64,15 +68,17 @@ export class Consumer extends EventTarget {
       const hostname = typeof Deno !== 'undefined' && Deno.hostname
         ? Deno.hostname()
         : 'unknown';
-      
+
       // @ts-ignore - Deno.pid might not be in types
       const pid = typeof Deno !== 'undefined' && Deno.pid !== undefined
         ? Deno.pid
         : Date.now();
-      
+
       return `consumer-${hostname}-${pid}`;
     } catch {
-      return `consumer-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      return `consumer-${Date.now()}-${
+        Math.random().toString(36).substring(2, 9)
+      }`;
     }
   }
 
@@ -111,13 +117,15 @@ export class Consumer extends EventTarget {
         try {
           // Read messages from all streams (work-stealing approach like old worker line 271-280)
           let messages: Message[] = [];
-          
+
           for (const streamKey of this.streams) {
             // Extract queue name from stream key (e.g., "default-stream" -> "default")
             const queueName = streamKey.replace('-stream', '');
-            const queueMessages = await this.streamReader.readQueueStream(queueName);
+            const queueMessages = await this.streamReader.readQueueStream(
+              queueName,
+            );
             messages.push(...queueMessages);
-            
+
             // If we got messages, break to process them (work-stealing)
             if (queueMessages.length > 0) {
               break;
@@ -141,7 +149,9 @@ export class Consumer extends EventTarget {
             }
 
             // Wait if we've hit concurrency limit (like old worker line 153-163)
-            while (this.#activeTasks.size >= this.concurrencyPool.maxConcurrency) {
+            while (
+              this.#activeTasks.size >= this.concurrencyPool.maxConcurrency
+            ) {
               await Promise.race([
                 Promise.race(this.#activeTasks),
                 this.delay(this.pollIntervalMs),
@@ -161,7 +171,7 @@ export class Consumer extends EventTarget {
               }
             })();
 
-            // Track the active task (like old worker line 224)
+            // Track the active job (like old worker line 224)
             this.#activeTasks.add(taskPromise);
 
             // Remove from tracking when done
@@ -174,9 +184,9 @@ export class Consumer extends EventTarget {
           const isTransient = this.#isRedisTransientError(error);
           const delayMs = isTransient
             ? Math.min(
-                this.pollIntervalMs * Math.pow(2, this.#consecutiveRedisErrors),
-                30000,
-              )
+              this.pollIntervalMs * Math.pow(2, this.#consecutiveRedisErrors),
+              30000,
+            )
             : this.pollIntervalMs;
           if (isTransient) this.#consecutiveRedisErrors += 1;
           else this.#consecutiveRedisErrors = 0;

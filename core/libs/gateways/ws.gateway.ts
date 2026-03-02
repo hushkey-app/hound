@@ -3,7 +3,7 @@
  * Uses Deno's built-in Deno.serve and Deno.upgradeWebSocket.
  */
 
-import type { Remq } from '../task-manager/mod.ts';
+import type { Remq } from '../remq/mod.ts';
 
 export type WsConnectionHandler = (ws: WebSocket, req: Request) => void;
 

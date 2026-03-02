@@ -17,7 +17,6 @@ export type {
   ListOptions,
   QueueInfo,
   QueueStats,
-  Task,
 } from '../../types/admin.ts';
 
 // All possible job statuses — order matters for getJob pipeline (most likely first)
