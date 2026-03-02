@@ -15,7 +15,7 @@ export interface UpdateFunction {
  * Context for the current job's WebSocket (when job was triggered via WS).
  * Use ctx.socket.update() to stream progress to the client; no-op if no socket is tracking this job.
  */
-export interface TaskSocketContext {
+export interface JobSocketContext {
   update: UpdateFunction;
 }
 
@@ -37,10 +37,7 @@ export interface EmitOptions {
  * Context passed to job handlers (job identity, payload, and capabilities).
  * App context is merged onto ctx via & TApp.
  */
-export interface TaskContext<
-  TApp extends Record<string, unknown> = Record<string, unknown>,
-  TData = unknown,
-> {
+export type JobContext<TApp extends Record<string, unknown>, TData> = {
   id: string;
   name: string;
   queue: string;
@@ -50,21 +47,21 @@ export interface TaskContext<
   data: TData;
   logger: (msg: string | object) => Promise<void>;
   emit: EmitFunction;
-  socket: TaskSocketContext;
-}
+  socket: JobSocketContext;
+} & TApp;
 
 /**
  * Handler function signature — single ctx argument with job + app context.
  */
-export type TaskHandler<
+export type JobHandler<
   TApp extends Record<string, unknown> = Record<string, unknown>,
   TData = unknown,
 > = (
-  ctx: TaskContext<TApp, TData>,
+  ctx: JobContext<TApp, TData>,
 ) => Promise<void> | void;
 
 /**
- * Emit function for triggering new tasks
+ * Emit function for triggering new Jobs
  */
 export interface EmitFunction {
   (event: string, data?: unknown, options?: EmitOptions): string;
@@ -83,7 +80,7 @@ export interface HandlerOptions {
 /**
  * Job Manager options
  */
-export interface TaskManagerOptions<T = unknown> {
+export interface JobManagerOptions<T = unknown> {
   /**
    * Redis connection for job storage
    */
@@ -100,7 +97,7 @@ export interface TaskManagerOptions<T = unknown> {
   ctx?: T;
 
   /**
-   * Number of concurrent tasks to process
+   * Number of concurrent Jobs to process
    * @default 1
    */
   concurrency?: number;
@@ -118,7 +115,7 @@ export interface TaskManagerOptions<T = unknown> {
   debug?: boolean;
 
   /**
-   * Processor options (retry, DLQ, debounce, maxLogsPerTask, stream trim, read count)
+   * Processor options (retry, DLQ, debounce, maxLogsPerJob, stream trim, read count)
    */
   processor?: {
     retry?: ProcessorOptions['retry'];
@@ -129,7 +126,7 @@ export interface TaskManagerOptions<T = unknown> {
      * Max number of log entries to keep per job. Trims oldest entries; keeps Redis self-cleaning.
      * @default undefined (no limit)
      */
-    maxLogsPerTask?: number;
+    maxLogsPerJob?: number;
     /**
      * Max stream length per queue stream. After each read+ACK, trims the stream to this length (approximate).
      * Prevents unbounded stream growth and memory blowup. Set to e.g. 10000 for production.

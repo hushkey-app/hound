@@ -13,7 +13,7 @@ control for admin UIs and external clients over jobs stored in Redis.
 ```typescript
 const admin = new RemqAdmin(db);
 
-const queues = await admin.getQueuesInfo();
+const queues = await admin.queuesInfo();
 const failedJobs = await admin.listJobs({
   queue: 'default',
   status: 'failed',
@@ -36,12 +36,12 @@ enables `onJobFinished()` and proper `retryJob()` (re-queues via `remq.emit()`).
 
 ## Types
 
-| Type | Purpose | Main fields |
-| --- | --- | --- |
-| `Job` | Stored job record | `id`, `state`, `status`, timestamps (`timestamp`, `lastRun`, `delayUntil`, `lockUntil`), `logs`, `errors`, `paused` |
-| `ListOptions` | List/filter options for `listJobs` | `queue`, `status`, `limit`, `offset` |
-| `QueueStats` | Per-queue status counts | `queue`, `waiting`, `processing`, `completed`, `failed`, `delayed`, `total` |
-| `QueueInfo` | Queue name + stats bundle | `name`, `stats` |
+| Type          | Purpose                            | Main fields                                                                                                         |
+| ------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `Job`         | Stored job record                  | `id`, `state`, `status`, timestamps (`timestamp`, `lastRun`, `delayUntil`, `lockUntil`), `logs`, `errors`, `paused` |
+| `ListOptions` | List/filter options for `listJobs` | `queue`, `status`, `limit`, `offset`                                                                                |
+| `QueueStats`  | Per-queue status counts            | `queue`, `waiting`, `processing`, `completed`, `failed`, `delayed`, `total`                                         |
+| `QueueInfo`   | Queue name + stats bundle          | `name`, `stats`                                                                                                     |
 
 ## Job
 
@@ -146,15 +146,15 @@ Notes:
 
 Deletes a job and its status keys from Redis.
 
-### `getQueueStats(queue: string): Promise<QueueStats>`
+### `stats(queue: string): Promise<QueueStats>`
 
 Returns a `QueueStats` object with counts by status plus a `total` for a single queue.
 
-### `getQueues(): Promise<string[]>`
+### `queues(): Promise<string[]>`
 
 Scans Redis keys and returns discovered queue names.
 
-### `getQueuesInfo(): Promise<QueueInfo[]>`
+### `queuesInfo(): Promise<QueueInfo[]>`
 
 Returns all queues with their statistics as `QueueInfo` objects (`name` + `stats`).
 

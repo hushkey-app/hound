@@ -120,7 +120,7 @@ const processor = new Processor({
   streamdb,
   consumer: {
     streamdb,
-    streams: ["default-stream"],
+    streams: ['default-stream'],
     handler: async (message) => {
       await processMessage(message);
     },
@@ -130,7 +130,7 @@ const processor = new Processor({
     retryDelayMs: 2000,
   },
   dlq: {
-    streamKey: "dlq-stream",
+    streamKey: 'dlq-stream',
   },
   debounce: 30,
 });

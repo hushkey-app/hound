@@ -9,9 +9,9 @@ export type {
   EmitFunction,
   EmitOptions,
   HandlerOptions,
-  TaskContext,
-  TaskHandler,
-  TaskManagerOptions,
+  JobContext,
+  JobHandler,
+  JobManagerOptions,
 } from './types/remq.ts';
 
 // Re-export lower-level APIs if needed

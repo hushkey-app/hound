@@ -10,7 +10,7 @@ import type {
   QueueInfo,
   QueueStats,
 } from '../../types/admin.ts';
-import { type Remq, SUBSCRIBE_TASK_FINISHED } from '../remq/mod.ts';
+import { type Remq, SUBSCRIBE_JOB_FINISHED } from '../remq/mod.ts';
 
 export type {
   Job,
@@ -63,9 +63,16 @@ export class RemqAdmin {
         'RemqAdmin.onJobFinished() requires a Remq instance: new RemqAdmin(db, remq)',
       );
     }
-    return this.remq[SUBSCRIBE_TASK_FINISHED]((p: any) =>
+    return this.remq[SUBSCRIBE_JOB_FINISHED]((
+      p: {
+        jobId: string;
+        queue: string;
+        status: 'completed' | 'failed';
+        error?: string;
+      },
+    ) =>
       cb({
-        jobId: p.taskId,
+        jobId: p.jobId,
         queue: p.queue,
         status: p.status,
         error: p.error,
@@ -292,7 +299,7 @@ export class RemqAdmin {
    * Pause one or all queues.
    */
   async pause(queue?: string): Promise<void> {
-    const qs = queue != null ? [queue] : await this.getQueues();
+    const qs = queue != null ? [queue] : await this.queues();
     const pipe = this.db.pipeline();
     qs.forEach((q) => pipe.set(`queues:${q}:paused`, 'true'));
     await pipe.exec();
@@ -302,7 +309,7 @@ export class RemqAdmin {
    * Resume one or all queues.
    */
   async resume(queue?: string): Promise<void> {
-    const qs = queue != null ? [queue] : await this.getQueues();
+    const qs = queue != null ? [queue] : await this.queues();
     const pipe = this.db.pipeline();
     qs.forEach((q) => pipe.del(`queues:${q}:paused`));
     await pipe.exec();
@@ -322,7 +329,7 @@ export class RemqAdmin {
    * Get all queue names (discovered by scanning keys).
    * Note: O(n) scan — consider a queues:registry SET for large deployments.
    */
-  async getQueues(): Promise<string[]> {
+  async queues(): Promise<string[]> {
     const found = new Set<string>();
     let cursor = '0';
 
@@ -353,7 +360,7 @@ export class RemqAdmin {
    * Get job count stats for a queue.
    * Uses SCAN per status — counts only, no data fetch.
    */
-  async getQueueStats(queue: string): Promise<QueueStats> {
+  async stats(queue: string): Promise<QueueStats> {
     const result: QueueStats = {
       queue,
       waiting: 0,
@@ -392,12 +399,12 @@ export class RemqAdmin {
   /**
    * Get all queues with their stats.
    */
-  async getQueuesInfo(): Promise<QueueInfo[]> {
-    const names = await this.getQueues();
+  async queuesInfo(): Promise<QueueInfo[]> {
+    const names = await this.queues();
     return Promise.all(
       names.map(async (name) => ({
         name,
-        stats: await this.getQueueStats(name),
+        stats: await this.stats(name),
       })),
     );
   }

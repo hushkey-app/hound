@@ -43,36 +43,44 @@ These are handled in higher layers (Processor, Scheduler, etc.):
 ## Key Improvements Over Original Worker
 
 ### 1. Stable Consumer ID ✅
+
 **Before:** Generated new consumer ID on every read
+
 ```typescript
 const consumerId = `worker-${crypto.randomUUID()}`; // ❌ Changes every read
 ```
 
 **After:** Stable consumer ID per instance
+
 ```typescript
 this.consumerId = options.consumerId || this.generateStableConsumerId();
 // Uses: consumer-{hostname}-{pid} or provided ID
 ```
 
 ### 2. Correct ACK Timing ✅
+
 **Before:** ACKed messages before processing
+
 ```typescript
 await this.streamdb.xack(...); // ❌ Before processing
 // Then process...
 ```
 
 **After:** ACKs after successful processing
+
 ```typescript
 await this.handler(message, ctx); // Process first
 await this.streamReader.ack(streamKey, message.id); // ✅ Then ack
 ```
 
 ### 3. Proper Pending Message Claiming ✅
+
 **Before:** Manual `XPENDING` + `XCLAIM` with custom logic
 
 **After:** Uses `XAUTOCLAIM` when available (Redis 6.2+), falls back gracefully
 
 ### 4. Clean Separation of Concerns ✅
+
 - Consumer = runtime engine (fetch, process, ack, emit)
 - Processor = policy layer (retries, delays, DLQ)
 - Scheduler = cron/timing layer
@@ -89,10 +97,10 @@ const consumer = new Consumer({
   handler: async (message, ctx) => {
     // Process message
     console.log('Processing:', message.data);
-    
+
     // Optionally ack early
     await ctx.ack();
-    
+
     // Or let Consumer ack automatically on success
   },
   concurrency: 5,
@@ -113,7 +121,7 @@ await consumer.start({ signal: abortSignal });
 
 // Stop processing
 consumer.stop();
-await consumer.waitForActiveTasks(); // Wait for in-flight messages
+await consumer.waitForActiveJobs(); // Wait for in-flight messages
 ```
 
 ## Files
@@ -136,14 +144,14 @@ The Consumer is designed to be used by a Processor layer that handles:
 // Processor layer (future)
 class Processor {
   constructor(private consumer: Consumer) {}
-  
+
   async handle(message: Message, ctx: MessageContext) {
     // 1. Check if message is delayed
     if (message.data.delayUntil > Date.now()) {
       // Requeue for later
       return;
     }
-    
+
     // 2. Execute handler
     try {
       await this.handlers[message.data.event](message.data, ctx);
@@ -164,7 +172,7 @@ class Processor {
 ```
 
 This separation allows:
+
 - Consumer to focus on correctness (stable IDs, proper ACK timing)
 - Processor to focus on business logic (retries, delays, routing)
 - Easy testing of each layer independently
-

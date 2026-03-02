@@ -65,7 +65,7 @@ lifecycle:
 ```typescript
 const consumer = new Consumer({
   streamdb,
-  streams: ["default-stream"],
+  streams: ['default-stream'],
   handler: async (message, ctx) => {
     // Process message payload
     console.log(message.data);
@@ -83,7 +83,7 @@ Build `ConsumerOptions`, create a Consumer, then start/stop it:
 ```typescript
 const options: ConsumerOptions = {
   streamdb,
-  streams: ["default-stream"],
+  streams: ['default-stream'],
   handler: async (message) => {
     await processMessage(message);
   },
@@ -107,23 +107,23 @@ The consumer emits lifecycle events via `CustomEvent`:
 - `error`: when an error is recorded
 
 ```typescript
-consumer.addEventListener("started", (event) => {
+consumer.addEventListener('started', (event) => {
   const { message } = event.detail;
-  console.log("started", message.id);
+  console.log('started', message.id);
 });
 
-consumer.addEventListener("succeeded", (event) => {
+consumer.addEventListener('succeeded', (event) => {
   const { message, duration } = event.detail;
-  console.log("succeeded", message.id, duration);
+  console.log('succeeded', message.id, duration);
 });
 
-consumer.addEventListener("failed", (event) => {
+consumer.addEventListener('failed', (event) => {
   const { message, error, duration } = event.detail;
-  console.error("failed", message.id, error, duration);
+  console.error('failed', message.id, error, duration);
 });
 
-consumer.addEventListener("error", (event) => {
-  console.error("consumer error", event.detail.error);
+consumer.addEventListener('error', (event) => {
+  console.error('consumer error', event.detail.error);
 });
 ```
 
@@ -151,14 +151,14 @@ stop(): void
 ```typescript
 const consumer = new Consumer({
   streamdb,
-  streams: ["default-stream"],
+  streams: ['default-stream'],
   handler: async (message) => {
     await processMessage(message);
   },
 });
 
-consumer.addEventListener("succeeded", (event) => {
-  console.log("processed", event.detail.message.id);
+consumer.addEventListener('succeeded', (event) => {
+  console.log('processed', event.detail.message.id);
 });
 
 const controller = new AbortController();

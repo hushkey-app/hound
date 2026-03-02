@@ -17,28 +17,28 @@ Main modules for job processing with Redis Streams.
 
 ### Consumer (`libs/consumer/`)
 
-| Class / Method                | Description                               |
-| ----------------------------- | ----------------------------------------- |
-| `Consumer`                    | Main consumer class                       |
-| `Consumer.constructor`        | `(options: ConsumerOptions)`              |
-| `Consumer.start`              | `start(options?): Promise<void>`          |
-| `Consumer.stop`               | `stop(): void`                            |
-| `Consumer.waitForActiveTasks` | `waitForActiveTasks(): Promise<void>`     |
-| `StreamReader`                | Redis Stream reading with consumer groups |
-| `ConcurrencyPool`             | Manages concurrent message processing     |
+| Class / Method               | Description                               |
+| ---------------------------- | ----------------------------------------- |
+| `Consumer`                   | Main consumer class                       |
+| `Consumer.constructor`       | `(options: ConsumerOptions)`              |
+| `Consumer.start`             | `start(options?): Promise<void>`          |
+| `Consumer.stop`              | `stop(): void`                            |
+| `Consumer.waitForActiveJobs` | `waitForActiveJobs(): Promise<void>`      |
+| `StreamReader`               | Redis Stream reading with consumer groups |
+| `ConcurrencyPool`            | Manages concurrent message processing     |
 
 ### Processor (`libs/processor/`)
 
-| Class / Method                 | Description                                                             |
-| ------------------------------ | ----------------------------------------------------------------------- |
-| `processor.maxLogsPerTask`     | Trim oldest logs per job; keeps Redis self-cleaning (default: no limit) |
-| `Processor`                    | Policy layer wrapping Consumer                                          |
-| `Processor.constructor`        | `(options: ProcessorOptions)`                                           |
-| `Processor.start`              | `start(options?): Promise<void>`                                        |
-| `Processor.stop`               | `stop(): void`                                                          |
-| `Processor.waitForActiveTasks` | `waitForActiveTasks(): Promise<void>`                                   |
-| `Processor.cleanup`            | `cleanup(): void`                                                       |
-| `DebounceManager`              | Per-handler debouncing                                                  |
+| Class / Method                | Description                                                             |
+| ----------------------------- | ----------------------------------------------------------------------- |
+| `processor.maxLogsPerTask`    | Trim oldest logs per job; keeps Redis self-cleaning (default: no limit) |
+| `Processor`                   | Policy layer wrapping Consumer                                          |
+| `Processor.constructor`       | `(options: ProcessorOptions)`                                           |
+| `Processor.start`             | `start(options?): Promise<void>`                                        |
+| `Processor.stop`              | `stop(): void`                                                          |
+| `Processor.waitForActiveJobs` | `waitForActiveJobs(): Promise<void>`                                    |
+| `Processor.cleanup`           | `cleanup(): void`                                                       |
+| `DebounceManager`             | Per-handler debouncing                                                  |
 
 ### RemqAdmin (`libs/sdk/`)
 
@@ -49,9 +49,9 @@ Main modules for job processing with Redis Streams.
 | `deleteJob`     | `deleteJob(jobId, queue): Promise<void>`                             |
 | `retryJob`      | `retryJob(jobId, queue): Promise<Job \| null>`                       |
 | `cancelJob`     | `cancelJob(jobId, queue): Promise<boolean>`                          |
-| `getQueueStats` | `getQueueStats(queue): Promise<QueueStats>`                          |
-| `getQueues`     | `getQueues(): Promise<string[]>`                                     |
-| `getQueuesInfo` | `getQueuesInfo(): Promise<QueueInfo[]>`                              |
+| `stats`         | `stats(queue): Promise<QueueStats>`                                  |
+| `queues`        | `queues(): Promise<string[]>`                                        |
+| `queuesInfo`    | `queuesInfo(): Promise<QueueInfo[]>`                                 |
 | `pause`         | `pause(queue?): Promise<void>`                                       |
 | `resume`        | `resume(queue?): Promise<void>`                                      |
 | `isPaused`      | `isPaused(queue): Promise<boolean>`                                  |
@@ -120,10 +120,10 @@ processor: {
 
 ## Real-time job updates: `ctx.socket.update` (BETA)
 
-When Remq is started with `expose` (WebSocket gateway), tasks triggered over WebSocket can send **progressive updates** to the client. Use `ctx.socket.update(data, progress)` inside a handler to push real-time payloads to the socket that requested the job.
+When Remq is started with `expose` (WebSocket gateway), jobs triggered over WebSocket can send **progressive updates** to the client. Use `ctx.socket.update(data, progress)` inside a handler to push real-time payloads to the socket that requested the job.
 
-- **Who receives updates**: By default, only the client that emitted the job gets `task_update` / `task_retry` / `task_finished` for that job. To receive **all** job updates (e.g. for dashboards), connect with the header **`x-get-broadcast: true`**; that connection will get every `task_update`, `task_retry`, and `task_finished` for any job.
-- **Payload**: any JSON-serializable value (object, array, string, number). The client receives `{ type: 'task_update', taskId, data, progress }`.
+- **Who receives updates**: By default, only the client that emitted the job gets `job_update` / `job_retry` / `job_finished` for that job. To receive **all** job updates (e.g. for dashboards), connect with the header **`x-get-broadcast: true`**; that connection will get every `job_update`, `job_retry`, and `job_finished` for any job.
+- **Payload**: any JSON-serializable value (object, array, string, number). The client receives `{ type: 'job_update', id, data, progress }`.
 
 ### Use cases
 
@@ -152,20 +152,20 @@ tm.on('generate-report', async (ctx) => {
 ```ts
 ws.onmessage = (event) => {
   const msg = JSON.parse(event.data);
-  if (msg.type === 'task_update') {
+  if (msg.type === 'job_update') {
     console.log('Progress:', msg.data); // e.g. { step: 'building', progress: 66 }
   }
-  if (msg.type === 'task_retry') {
-    // Attempt failed; retry scheduled. Connection stays open for more updates/final task_finished.
+  if (msg.type === 'job_retry') {
+    // Attempt failed; retry scheduled. Connection stays open for more updates/final job_finished.
     console.log('Retry scheduled:', msg.error, 'retries left:', msg.retryCount);
   }
-  if (msg.type === 'task_finished') {
+  if (msg.type === 'job_finished') {
     console.log('Job done:', msg.status); // only sent when job completes or finally fails (no more retries)
   }
 };
 ```
 
-**Broadcast (all job updates):** Connect with header `x-get-broadcast: true` to receive every `task_update` / `task_retry` / `task_finished` for any job. Example from Node/Deno (browsers cannot set custom WebSocket headers; use a backend or a client that supports it):
+**Broadcast (all job updates):** Connect with header `x-get-broadcast: true` to receive every `job_update` / `job_retry` / `job_finished` for any job. Example from Node/Deno (browsers cannot set custom WebSocket headers; use a backend or a client that supports it):
 
 ```ts
 import { WebSocket } from 'npm:ws'; // or Deno std ws

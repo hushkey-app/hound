@@ -61,7 +61,12 @@ Register a handler for an event name and optional queue. Returns `this` for chai
 remq
   .on('send-email', async (ctx) => {
     await ctx.emit('track-email', { id: ctx.data?.id });
-  }, { queue: 'emails', repeat: { pattern: '0 0 * * *' }, attempts: 3, debounce: 60000 });
+  }, {
+    queue: 'emails',
+    repeat: { pattern: '0 0 * * *' },
+    attempts: 3,
+    debounce: 60000,
+  });
 ```
 
 **HandlerOptions:** `queue?`, `repeat?`, `attempts?`, `debounce?`

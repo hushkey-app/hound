@@ -36,7 +36,9 @@ Deno.test('Processor initializes retry, DLQ, and debounce configs', () => {
     throw new Error('Expected retryConfig to be initialized with maxRetries');
   }
 
-  if (!processorAny.dlqConfig || processorAny.dlqConfig.streamKey !== 'orders-dlq') {
+  if (
+    !processorAny.dlqConfig || processorAny.dlqConfig.streamKey !== 'orders-dlq'
+  ) {
     throw new Error('Expected dlqConfig to be initialized with streamKey');
   }
 

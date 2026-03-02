@@ -241,8 +241,8 @@ export class Processor {
   /**
    * Waits for all active tasks to complete
    */
-  async waitForActiveTasks(): Promise<void> {
-    await this.consumer.waitForActiveTasks();
+  async waitForActiveJobs(): Promise<void> {
+    await this.consumer.waitForActiveJobs();
   }
 
   /**

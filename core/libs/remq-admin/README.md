@@ -73,15 +73,15 @@ await admin.deleteJob('job-id-123', 'default');
 ### Get Queue Statistics
 
 ```typescript
-const stats = await admin.getQueueStats('default');
+const stats = await admin.stats('default');
 console.log('Total:', stats.total, 'Failed:', stats.failed);
 ```
 
 ### Get All Queues
 
 ```typescript
-const queues = await admin.getQueues();
-const queuesInfo = await admin.getQueuesInfo();
+const queues = await admin.queues();
+const queuesInfo = await admin.queuesInfo();
 ```
 
 ### Retry / Cancel

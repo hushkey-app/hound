@@ -36,7 +36,11 @@ Deno.test('Processor sends to DLQ by default when streamKey is set', async () =>
   } as unknown as MessageContext;
 
   const processorAny = processor as unknown as {
-    handleFailure: (message: ProcessableMessage, error: Error, ctx: MessageContext) => Promise<void>;
+    handleFailure: (
+      message: ProcessableMessage,
+      error: Error,
+      ctx: MessageContext,
+    ) => Promise<void>;
   };
 
   await processorAny.handleFailure(message, new Error('fail'), ctx);
@@ -92,7 +96,11 @@ Deno.test('Processor respects shouldSendToDLQ and passes attempts', async () => 
   } as unknown as MessageContext;
 
   const processorAny = processor as unknown as {
-    handleFailure: (message: ProcessableMessage, error: Error, ctx: MessageContext) => Promise<void>;
+    handleFailure: (
+      message: ProcessableMessage,
+      error: Error,
+      ctx: MessageContext,
+    ) => Promise<void>;
   };
 
   await processorAny.handleFailure(message, new Error('fail'), ctx);

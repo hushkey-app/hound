@@ -21,7 +21,7 @@ consistent queue state.
 
 ```typescript
 import Redis from 'npm:ioredis';
-import { RemqAdmin, Remq } from 'npm:@leotermine/tasker';
+import { Remq, RemqAdmin } from 'npm:@leotermine/tasker';
 
 const db = new Redis({ host: '127.0.0.1', port: 6379 });
 const remq = Remq.create({ db });
@@ -30,12 +30,12 @@ const admin = new RemqAdmin(db);
 
 ## Queue overview cards
 
-Use `getQueuesInfo()` or `getQueueStats()` to populate queue summary tiles.
+Use `queuesInfo()` or `stats()` to populate queue summary tiles.
 Each `QueueStats` entry includes per-status counts.
 
 ```typescript
-const queues = await admin.getQueuesInfo();
-const stats = await admin.getQueueStats('default');
+const queues = await admin.queuesInfo();
+const stats = await admin.stats('default');
 ```
 
 ## Job browser and detail views

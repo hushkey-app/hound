@@ -4,7 +4,7 @@
  * Simple, developer-friendly API built on top of Consumer + Processor
  */
 
-// export { Remq, SUBSCRIBE_TASK_FINISHED } from './remq.ts';
+// export { Remq, SUBSCRIBE_Job_FINISHED } from './remq.ts';
 
 import { Processor } from '../processor/processor.ts';
 import { DebounceManager } from '../processor/debounce-manager.ts';
@@ -13,13 +13,13 @@ import type {
   EmitFunction,
   EmitOptions,
   HandlerOptions,
+  JobHandler,
+  JobManagerOptions,
+  JobSocketContext,
   Message,
   MessageContext,
   ProcessableMessage,
   RedisConnection,
-  TaskHandler,
-  TaskManagerOptions,
-  TaskSocketContext,
 } from '../../types/index.ts';
 import { genJobIdSync } from './utils.ts';
 import { parseCronExpression } from 'cron-schedule';
@@ -28,16 +28,16 @@ export type {
   EmitFunction,
   EmitOptions,
   HandlerOptions,
-  TaskContext,
-  TaskHandler,
-  TaskManagerOptions,
+  JobContext,
+  JobHandler,
+  JobManagerOptions,
 } from '../../types/remq.ts';
 
 /** Symbol for internal subscription (Sdk only). Not part of public API. */
-export const SUBSCRIBE_TASK_FINISHED = Symbol.for('remq.subscribeTaskFinished');
+export const SUBSCRIBE_JOB_FINISHED = Symbol.for('remq.subscribeJobFinished');
 
 /**
- * Remq - High-level API for managing tasks/jobs
+ * Remq - High-level API for managing Jobs/jobs
  *
  * Based on old worker's robust processJob logic with cleaner naming
  */
@@ -50,10 +50,10 @@ export class Remq<
   private readonly streamdb: RedisConnection;
   private readonly ctx: TApp & { emit: EmitFunction };
   private readonly concurrency: number;
-  private readonly processorOptions: TaskManagerOptions<TApp>['processor'];
+  private readonly processorOptions: JobManagerOptions<TApp>['processor'];
   private readonly debug: boolean;
 
-  private handlers: Map<string, TaskHandler<TApp, any>> = new Map();
+  private handlers: Map<string, JobHandler<TApp, any>> = new Map();
   private handlerDebounce: Map<string, DebounceManager> = new Map(); // handlerKey -> DebounceManager
   private processor?: Processor;
   private queueStreams: Set<string> = new Set();
@@ -62,19 +62,19 @@ export class Remq<
   private wsServer?: ReturnType<typeof createWsGateway>;
   /** Sockets that requested broadcast via header x-get-broadcast: true */
   private readonly broadcastSockets = new Set<WebSocket>();
-  readonly #taskFinishedListeners = new Set<
+  readonly #jobFinishedListeners = new Set<
     (
       payload: {
-        taskId: string;
+        jobId: string;
         queue: string;
         status: 'completed' | 'failed';
         error?: string;
       },
     ) => void
   >();
-  #taskFinishedUnsubscribe?: () => void;
-  private readonly taskIdToSockets = new Map<string, Set<WebSocket>>();
-  private readonly socketToTaskIds = new Map<WebSocket, Set<string>>();
+  #jobFinishedUnsubscribe?: () => void;
+  private readonly jobIdToSockets = new Map<string, Set<WebSocket>>();
+  private readonly socketToJobIds = new Map<WebSocket, Set<string>>();
   #workerRunIndex = 0; // used for debug log worker_id (0..concurrency-1)
 
   // Job status messages (like old worker line 71-80)
@@ -86,7 +86,7 @@ export class Remq<
     failed: (error: string) => `Job failed: ${error}`,
   };
 
-  private constructor(options: TaskManagerOptions<TApp>) {
+  private constructor(options: JobManagerOptions<TApp>) {
     this.db = options.db;
     this.streamdb = options.streamdb || options.db;
     this.concurrency = options.concurrency ?? 1;
@@ -101,7 +101,7 @@ export class Remq<
   }
 
   static create<TApp extends Record<string, unknown> = Record<string, unknown>>(
-    options: TaskManagerOptions<TApp>,
+    options: JobManagerOptions<TApp>,
   ): Remq<TApp> {
     if (!Remq.instance) {
       Remq.instance = new Remq(options);
@@ -121,7 +121,7 @@ export class Remq<
    */
   on<D = unknown>(
     event: string,
-    handler: TaskHandler<TApp, D>,
+    handler: JobHandler<TApp, D>,
     options?: HandlerOptions,
   ): this {
     const queue = options?.queue ?? 'default';
@@ -136,7 +136,7 @@ export class Remq<
     }
 
     const handlerKey = `${queue}:${event}`;
-    this.handlers.set(handlerKey, handler as TaskHandler<TApp, any>);
+    this.handlers.set(handlerKey, handler as JobHandler<TApp, any>);
 
     const streamKey = `${queue}-stream`;
     this.queueStreams.add(streamKey);
@@ -219,29 +219,29 @@ export class Remq<
   }
 
   /** Internal: use RemqAdmin.onJobFinished() for public API. Keyed by symbol so not in public surface. */
-  [SUBSCRIBE_TASK_FINISHED](
+  [SUBSCRIBE_JOB_FINISHED](
     cb: (payload: {
-      taskId: string;
+      jobId: string;
       queue: string;
       status: 'completed' | 'failed';
       error?: string;
     }) => void,
   ): () => void {
-    this.#taskFinishedListeners.add(cb);
-    return () => this.#taskFinishedListeners.delete(cb);
+    this.#jobFinishedListeners.add(cb);
+    return () => this.#jobFinishedListeners.delete(cb);
   }
 
-  #notifyTaskFinished(payload: {
-    taskId: string;
+  #notifyJobFinished(payload: {
+    jobId: string;
     queue: string;
     status: 'completed' | 'failed';
     error?: string;
   }): void {
-    for (const cb of this.#taskFinishedListeners) {
+    for (const cb of this.#jobFinishedListeners) {
       try {
         cb(payload);
       } catch (err) {
-        console.error('taskFinished listener error:', err);
+        console.error('jobFinished listener error:', err);
       }
     }
   }
@@ -278,19 +278,19 @@ export class Remq<
   }
 
   /**
-   * Trim oldest log entries when maxLogsPerTask is set (self-cleaning).
+   * Trim oldest log entries when maxLogsPerJob is set (self-cleaning).
    */
   #trimLogs(
     jobEntry: { logs?: unknown[] },
-    maxLogsPerTask: number | undefined,
+    maxLogsPerJob: number | undefined,
   ): void {
     if (
-      typeof maxLogsPerTask !== 'number' ||
-      maxLogsPerTask <= 0 ||
+      typeof maxLogsPerJob !== 'number' ||
+      maxLogsPerJob <= 0 ||
       !jobEntry.logs?.length ||
-      jobEntry.logs.length <= maxLogsPerTask
+      jobEntry.logs.length <= maxLogsPerJob
     ) return;
-    const excess = jobEntry.logs.length - maxLogsPerTask;
+    const excess = jobEntry.logs.length - maxLogsPerJob;
     jobEntry.logs.splice(0, excess);
   }
 
@@ -301,7 +301,7 @@ export class Remq<
     id: string,
     event: string,
     queue: string,
-  ): TaskSocketContext {
+  ): JobSocketContext {
     if (this.expose == null) {
       return {
         update: () => {
@@ -313,7 +313,7 @@ export class Remq<
     }
     return {
       update: (data: unknown, progress?: number) =>
-        this.sendTaskUpdate({
+        this.sendJobUpdate({
           id,
           event,
           queue,
@@ -326,8 +326,8 @@ export class Remq<
   /**
    * Sockets that should receive updates for a job: emitters for this job plus any client that connected with x-get-broadcast: true.
    */
-  #getSocketsForTaskUpdate(taskId: string): Set<WebSocket> {
-    const out = new Set<WebSocket>(this.taskIdToSockets.get(taskId) ?? []);
+  #getSocketsForJobUpdate(jobId: string): Set<WebSocket> {
+    const out = new Set<WebSocket>(this.jobIdToSockets.get(jobId) ?? []);
     for (const ws of this.broadcastSockets) {
       if (ws.readyState === WebSocket.OPEN) out.add(ws);
     }
@@ -337,7 +337,7 @@ export class Remq<
   /**
    * Send a progressive update to WebSocket client(s) tracking this job (or all when exposeBroadcast).
    */
-  private sendTaskUpdate({
+  private sendJobUpdate({
     id,
     event,
     queue,
@@ -350,10 +350,10 @@ export class Remq<
     data: unknown;
     progress: number;
   }): void {
-    const sockets = this.#getSocketsForTaskUpdate(id);
+    const sockets = this.#getSocketsForJobUpdate(id);
     if (!sockets.size) return;
     const payloadStr = JSON.stringify({
-      type: 'task_update',
+      type: 'job_update',
       id,
       event,
       queue,
@@ -366,7 +366,7 @@ export class Remq<
           socket.send(payloadStr);
         }
       } catch (err) {
-        console.error('WS send task_update error:', err);
+        console.error('WS send job_update error:', err);
       }
     }
   }
@@ -374,7 +374,7 @@ export class Remq<
   /**
    * Notify WebSocket client(s) that this job attempt failed and a retry is scheduled (or all when exposeBroadcast).
    */
-  private sendTaskRetry({
+  private sendJobRetry({
     id,
     event,
     queue,
@@ -389,11 +389,11 @@ export class Remq<
     retryCount: number;
     retryDelayMs: number;
   }): void {
-    const sockets = this.#getSocketsForTaskUpdate(id);
+    const sockets = this.#getSocketsForJobUpdate(id);
     if (!sockets.size) return;
     const payloadStr = JSON.stringify({
-      type: 'task_retry',
-      taskId: id,
+      type: 'job_retry',
+      jobId: id,
       event,
       queue,
       error,
@@ -406,7 +406,7 @@ export class Remq<
           socket.send(payloadStr);
         }
       } catch (err) {
-        console.error('WS send task_retry error:', err);
+        console.error('WS send job_retry error:', err);
       }
     }
   }
@@ -450,13 +450,13 @@ export class Remq<
         remq: this,
         onConnection: (ws, req) => this.handleWsConnection(ws, req),
       });
-      this.#taskFinishedUnsubscribe = this[SUBSCRIBE_TASK_FINISHED](
+      this.#jobFinishedUnsubscribe = this[SUBSCRIBE_JOB_FINISHED](
         (payload) => {
-          const sockets = this.#getSocketsForTaskUpdate(payload.taskId);
+          const sockets = this.#getSocketsForJobUpdate(payload.jobId);
           if (!sockets.size) return;
           const payloadStr = JSON.stringify({
-            type: 'task_finished',
-            taskId: payload.taskId,
+            type: 'job_finished',
+            jobId: payload.jobId,
             queue: payload.queue,
             status: payload.status,
             error: payload.error,
@@ -467,14 +467,14 @@ export class Remq<
                 socket.send(payloadStr);
               }
             } catch (err) {
-              console.error('WS send task_finished error:', err);
+              console.error('WS send job_finished error:', err);
             }
           }
-          const socketsThatHadTask = this.taskIdToSockets.get(payload.taskId);
-          this.taskIdToSockets.delete(payload.taskId);
-          if (socketsThatHadTask) {
-            for (const ws of socketsThatHadTask) {
-              this.socketToTaskIds.get(ws)?.delete(payload.taskId);
+          const socketsThatHadJob = this.jobIdToSockets.get(payload.jobId);
+          this.jobIdToSockets.delete(payload.jobId);
+          if (socketsThatHadJob) {
+            for (const ws of socketsThatHadJob) {
+              this.socketToJobIds.get(ws)?.delete(payload.jobId);
             }
           }
         },
@@ -490,8 +490,8 @@ export class Remq<
 
   /**
    * Handle WebSocket client: accept { type: 'emit', event, queue?, data?, options? }, call emit,
-   * reply with { type: 'queued', taskId } and later { type: 'task_finished', taskId, status, ... }.
-   * If the client connected with header x-get-broadcast: true, they receive all task_update / task_retry / task_finished.
+   * reply with { type: 'queued', jobId } and later { type: 'job_finished', jobId, status, ... }.
+   * If the client connected with header x-get-broadcast: true, they receive all job_update / job_retry / job_finished.
    */
   private handleWsConnection(ws: WebSocket, req: Request): void {
     const wantBroadcast =
@@ -499,27 +499,27 @@ export class Remq<
     if (wantBroadcast) {
       this.broadcastSockets.add(ws);
     }
-    const addTaskForSocket = (taskId: string) => {
-      if (!this.socketToTaskIds.has(ws)) {
-        this.socketToTaskIds.set(ws, new Set());
+    const addJobForSocket = (jobId: string) => {
+      if (!this.socketToJobIds.has(ws)) {
+        this.socketToJobIds.set(ws, new Set());
       }
-      this.socketToTaskIds.get(ws)!.add(taskId);
-      if (!this.taskIdToSockets.has(taskId)) {
-        this.taskIdToSockets.set(taskId, new Set());
+      this.socketToJobIds.get(ws)!.add(jobId);
+      if (!this.jobIdToSockets.has(jobId)) {
+        this.jobIdToSockets.set(jobId, new Set());
       }
-      this.taskIdToSockets.get(taskId)!.add(ws);
+      this.jobIdToSockets.get(jobId)!.add(ws);
     };
     const removeSocket = () => {
       this.broadcastSockets.delete(ws);
-      const taskIds = this.socketToTaskIds.get(ws);
-      if (taskIds) {
-        for (const taskId of taskIds) {
-          this.taskIdToSockets.get(taskId)?.delete(ws);
-          if (this.taskIdToSockets.get(taskId)?.size === 0) {
-            this.taskIdToSockets.delete(taskId);
+      const jobIds = this.socketToJobIds.get(ws);
+      if (jobIds) {
+        for (const jobId of jobIds) {
+          this.jobIdToSockets.get(jobId)?.delete(ws);
+          if (this.jobIdToSockets.get(jobId)?.size === 0) {
+            this.jobIdToSockets.delete(jobId);
           }
         }
-        this.socketToTaskIds.delete(ws);
+        this.socketToJobIds.delete(ws);
       }
     };
 
@@ -538,13 +538,13 @@ export class Remq<
         };
         // Accept both { type: 'emit', event, ... } and { event, data, options }
         if (typeof msg?.event === 'string') {
-          const taskId = this.emit(msg.event, msg.data, {
+          const jobId = this.emit(msg.event, msg.data, {
             queue: msg.queue,
             ...msg.options,
           } as EmitOptions);
-          addTaskForSocket(taskId);
+          addJobForSocket(jobId);
           if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'queued', taskId }));
+            ws.send(JSON.stringify({ type: 'queued', jobId }));
           }
         }
       } catch (_) {
@@ -557,11 +557,11 @@ export class Remq<
    * Stop processing jobs
    */
   async stop(): Promise<void> {
-    this.#taskFinishedUnsubscribe?.();
-    this.#taskFinishedUnsubscribe = undefined;
+    this.#jobFinishedUnsubscribe?.();
+    this.#jobFinishedUnsubscribe = undefined;
     this.broadcastSockets.clear();
-    this.taskIdToSockets.clear();
-    this.socketToTaskIds.clear();
+    this.jobIdToSockets.clear();
+    this.socketToJobIds.clear();
     if (this.wsServer) {
       await this.wsServer.shutdown();
       this.wsServer = undefined;
@@ -574,11 +574,11 @@ export class Remq<
   }
 
   /**
-   * Wait for all active tasks to finish (e.g. before shutdown).
+   * Wait for all active Jobs to finish (e.g. before shutdown).
    */
   async drain(): Promise<void> {
     if (this.processor) {
-      await this.processor.waitForActiveTasks();
+      await this.processor.waitForActiveJobs();
     }
   }
 
@@ -721,7 +721,7 @@ export class Remq<
     queueName: string,
     state: any,
     stateAny: any,
-    handler: TaskHandler<TApp, any>,
+    handler: JobHandler<TApp, any>,
     processableMessage: ProcessableMessage,
   ): Promise<void> {
     try {
@@ -734,7 +734,7 @@ export class Remq<
       }
 
       // Add logger function (like old worker line 365-383)
-      const maxLogsPerTask = this.processorOptions?.maxLogsPerTask;
+      const maxLogsPerJob = this.processorOptions?.maxLogsPerJob;
       if (!jobEntry.logger) {
         jobEntry.logger = async (message: string | object) => {
           const logEntry = {
@@ -745,7 +745,7 @@ export class Remq<
           };
 
           jobEntry.logs?.push(logEntry);
-          this.#trimLogs(jobEntry, maxLogsPerTask);
+          this.#trimLogs(jobEntry, maxLogsPerJob);
           // Logs live only in job blob (no per-entry Redis keys) to avoid key explosion
         };
       }
@@ -761,7 +761,7 @@ export class Remq<
           message: this.JOB_STATUS_MESSAGES.processing,
           timestamp: Date.now(),
         });
-        this.#trimLogs(jobEntry, maxLogsPerTask);
+        this.#trimLogs(jobEntry, maxLogsPerJob);
       }
 
       // Update status to processing (like old worker line 399-409)
@@ -800,23 +800,17 @@ export class Remq<
       };
       await handler(ctx);
 
-      // After processing, get any logs (like old worker line 414-419)
-      const currentJobData = await this.db.get(processingKey);
-      const currentJob = currentJobData
-        ? JSON.parse(currentJobData)
-        : processingData;
-
       // Combine logs and update status to completed (like old worker line 421-429)
-      const completedLogs = [...(currentJob.logs || []), {
+      const completedLogs = [...(processingData.logs || []), {
         message: this.JOB_STATUS_MESSAGES.completed,
         timestamp: Date.now(),
       }];
       const completedData = {
-        ...currentJob,
+        ...processingData,
         logs: completedLogs,
         status: 'completed',
       };
-      this.#trimLogs(completedData, this.processorOptions?.maxLogsPerTask);
+      this.#trimLogs(completedData, this.processorOptions?.maxLogsPerJob);
 
       // Store completed state (like old worker line 431-438)
       await this.db.del(
@@ -825,8 +819,8 @@ export class Remq<
       await this.db.del(processingKey);
       const completedKey = `queues:${queueName}:${completedData.id}:completed`;
       await this.#setJobState(completedKey, JSON.stringify(completedData));
-      this.#notifyTaskFinished({
-        taskId: jobId,
+      this.#notifyJobFinished({
+        jobId,
         queue: queueName,
         status: 'completed',
       });
@@ -872,21 +866,21 @@ export class Remq<
           timestamp: Date.now(),
         }],
       };
-      this.#trimLogs(failedData, this.processorOptions?.maxLogsPerTask);
+      this.#trimLogs(failedData, this.processorOptions?.maxLogsPerJob);
 
       if (!willRetry) {
         // Only persist failed state and notify WS when job is finally done (no more retries).
         const failedKey = `queues:${queueName}:${jobEntry.id}:failed`;
         await this.#setJobState(failedKey, JSON.stringify(failedData));
-        this.#notifyTaskFinished({
-          taskId: jobEntry.id,
+        this.#notifyJobFinished({
+          jobId: jobEntry.id,
           queue: queueName,
           status: 'failed',
           error: errorMessage,
         });
       } else {
         // Retrying: keep WS subscribed and tell client this attempt failed and retry is scheduled.
-        this.sendTaskRetry({
+        this.sendJobRetry({
           id: jobEntry.id,
           event: state.name!,
           queue: queueName,
@@ -910,7 +904,7 @@ export class Remq<
           retriedAttempts: (jobEntry.retriedAttempts || 0) + 1,
           logs: retryLogs,
         };
-        this.#trimLogs(retryJob, this.processorOptions?.maxLogsPerTask);
+        this.#trimLogs(retryJob, this.processorOptions?.maxLogsPerJob);
 
         await this.#xadd(`${queueName}-stream`, JSON.stringify(retryJob));
       }

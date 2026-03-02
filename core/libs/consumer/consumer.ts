@@ -10,7 +10,7 @@ import { ConcurrencyPool } from './concurrency-pool.ts';
 /**
  * Consumer - Runtime engine for processing messages from Redis Streams
  *
- * Based on old worker's robust processTasksLoop logic
+ * Based on old worker's robust processJobsLoop logic
  */
 export class Consumer extends EventTarget {
   private readonly streamdb: ConsumerOptions['streamdb'];
@@ -25,7 +25,7 @@ export class Consumer extends EventTarget {
   #isProcessing = false;
   #processingController = new AbortController();
   #processingFinished: Promise<void> = Promise.resolve();
-  readonly #activeTasks = new Set<Promise<void>>(); // Like old worker line 63
+  readonly #activeJobs = new Set<Promise<void>>(); // Like old worker line 63
   #consecutiveRedisErrors = 0;
 
   constructor(options: ConsumerOptions) {
@@ -83,7 +83,7 @@ export class Consumer extends EventTarget {
   }
 
   /**
-   * Starts processing messages (like old worker processTasks)
+   * Starts processing messages (like old worker processJobs)
    */
   async start(options: { signal?: AbortSignal } = {}): Promise<void> {
     // Ensure consumer groups once at startup, not on every poll (avoids Redis round trip per stream per cycle)
@@ -99,7 +99,7 @@ export class Consumer extends EventTarget {
   }
 
   /**
-   * Main processing loop (copied from old worker processTasksLoop)
+   * Main processing loop (copied from old worker processJobsLoop)
    */
   async #processLoop(
     options: { signal?: AbortSignal; controller: AbortController },
@@ -150,10 +150,10 @@ export class Consumer extends EventTarget {
 
             // Wait if we've hit concurrency limit (like old worker line 153-163)
             while (
-              this.#activeTasks.size >= this.concurrencyPool.maxConcurrency
+              this.#activeJobs.size >= this.concurrencyPool.maxConcurrency
             ) {
               await Promise.race([
-                Promise.race(this.#activeTasks),
+                Promise.race(this.#activeJobs),
                 this.delay(this.pollIntervalMs),
               ]);
 
@@ -172,11 +172,11 @@ export class Consumer extends EventTarget {
             })();
 
             // Track the active job (like old worker line 224)
-            this.#activeTasks.add(taskPromise);
+            this.#activeJobs.add(taskPromise);
 
             // Remove from tracking when done
             taskPromise.finally(() => {
-              this.#activeTasks.delete(taskPromise);
+              this.#activeJobs.delete(taskPromise);
             });
           }
         } catch (error) {
@@ -259,16 +259,16 @@ export class Consumer extends EventTarget {
   /**
    * Set of currently running tasks
    */
-  get activeTasks(): Set<Promise<void>> {
-    return this.#activeTasks;
+  get activeJobs(): Set<Promise<void>> {
+    return this.#activeJobs;
   }
 
   /**
    * Waits for all active tasks to complete
    */
-  async waitForActiveTasks(): Promise<void> {
-    if (this.#activeTasks.size > 0) {
-      await Promise.all(this.#activeTasks);
+  async waitForActiveJobs(): Promise<void> {
+    if (this.#activeJobs.size > 0) {
+      await Promise.all(this.#activeJobs);
     }
   }
 

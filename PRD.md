@@ -92,18 +92,17 @@ to the APIs in `core/types` and `core/libs` that matter for the docs.
 - [x] **5.3** Document **job methods**: `getJob(jobId, queue)`,
       `listJobs(options)`, `deleteJob(jobId, queue)` with params and return
       types; mention `ListJobsOptions` (`queue`, `status`, `limit`, `offset`).
-- [x] **5.4** Document **queue methods**: `getQueueStats(queue)`, `getQueues()`,
-      `getQueuesInfo()` and their return types (`TaskStats`, `QueueInfo`).
+- [x] **5.4** Document **queue methods**: `stats(queue)`, `queues()`,
+      `queuesInfo()` and their return types (`TaskStats`, `QueueInfo`).
 - [x] **5.5** Document **control methods**: `retryJob(jobId, queue)`,
       `cancelJob(jobId, queue)`, `pauseQueue(queue)`, `resumeQueue(queue)`,
-      `isPaused(queue)`, `pauseJob(jobId, queue)`,
-      `resumeJob(jobId, queue)` with behavior and errors (e.g. “only failed jobs
-      can be retried”).
+      `isPaused(queue)`, `pauseJob(jobId, queue)`, `resumeJob(jobId, queue)`
+      with behavior and errors (e.g. “only failed jobs can be retried”).
 - [x] **5.6** Document **admin types**: `AdminJobData` (main fields: id, state,
       status, timestamps, logs, errors, paused), `ListJobsOptions`, `TaskStats`,
       `QueueInfo` in a small “Types” subsection or table.
 - [x] **5.7** Add a minimal **code example**: instantiating AdminStore and
-      calling 2–3 methods (e.g. `getQueuesInfo()`, `listJobs()`, `retryJob()`).
+      calling 2–3 methods (e.g. `queuesInfo()`, `listJobs()`, `retryJob()`).
 
 ---
 

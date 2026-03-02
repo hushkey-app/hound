@@ -44,7 +44,7 @@ export function createWsGateway(options: WsGatewayOptions) {
           onConnection?.(socket, req);
         });
 
-        // Message handling (emit + queued/task_finished reply) is done in onConnection handler (handleWsConnection)
+        // Message handling (emit + queued/job_finished reply) is done in onConnection handler (handleWsConnection)
 
         return response;
       } catch (err) {
