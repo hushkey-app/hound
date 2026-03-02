@@ -6,7 +6,7 @@ Deno.test("message queues guide covers queue flow and options", async () => {
 
   const requiredSnippets = [
     "Redis Streams",
-    "TaskManager.emit",
+    "Remq.emit",
     "registerHandler",
     "queue: 'emails'",
     "priority",

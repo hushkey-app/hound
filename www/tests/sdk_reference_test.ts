@@ -25,7 +25,7 @@ Deno.test("Sdk reference matches current API", async () => {
     "getQueues(): Promise<string[]>",
     "getQueuesInfo(): Promise<QueueInfo[]>",
     "retryTask",
-    "TaskManager.emit()",
+    "Remq.emit()",
     "only failed jobs can be retried",
   ];
 

@@ -31,7 +31,7 @@ new Sdk(db: RedisConnection)
 ```
 
 `db` is the Redis connection used for CRUD and control operations. It should be
-the same connection used by `TaskManager` so queue state is consistent.
+the same connection used by Remq so queue state is consistent.
 
 ## Types
 
@@ -167,14 +167,14 @@ and appending a retry log entry. Returns the updated job or `null` if the job
 is missing. Throws if the job status is not `failed`.
 
 Note: this method only updates Redis state. Re-emit the job via
-`TaskManager.emit()` to actually process it.
+`Remq.emit()` to actually process it.
 
-### `cancelTask(taskId, queue)`, `pauseQueue`, `resumeQueue`, `isQueuePaused`, `pauseTask`, `resumeTask`
+### `cancelTask(taskId, queue)`, `pause`, `resume`, `isPaused`, `pauseTask`, `resumeTask`
 
 Cancel/pause/resume tasks and queues. See core SDK README for details.
 
 ## Next Steps
 
-- [TaskManager API](/reference/task-manager)
+- [Remq API](/reference/task-manager)
 - [Consumer API](/reference/consumer)
 - [Processor API](/reference/processor)

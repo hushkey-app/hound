@@ -87,9 +87,9 @@ const cancelled = await sdk.cancelTask('job-id-123', 'default');
 ### Pause / Resume
 
 ```typescript
-await sdk.pauseQueue('default');
-await sdk.resumeQueue('default');
-const isPaused = await sdk.isQueuePaused('default');
+await sdk.pause('default');  // or sdk.pause() to pause all queues
+await sdk.resume('default'); // or sdk.resume() to resume all queues
+const isPaused = await sdk.isPaused('default');
 ```
 
 ## Integration with TaskManager
@@ -97,9 +97,9 @@ const isPaused = await sdk.isQueuePaused('default');
 Use `Sdk` alongside `TaskManager` for admin or external clients:
 
 ```typescript
-import { Sdk, TaskManager } from '@core/mod.ts';
+import { Sdk, Remq } from '@core/mod.ts';
 
-const taskManager = TaskManager.init({ db, streamdb, ctx: {}, concurrency: 4 });
+const remq = Remq.create({ db, streamdb, ctx: {}, concurrency: 4 });
 const sdk = new Sdk(db);
 
 // e.g. in HTTP handlers

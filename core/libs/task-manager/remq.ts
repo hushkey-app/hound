@@ -3,6 +3,8 @@ import { DebounceManager } from '../processor/debounce-manager.ts';
 import { createWsGateway } from '../gateways/ws.gateway.ts';
 import type {
   EmitFunction,
+  EmitOptions,
+  HandlerOptions,
   Message,
   MessageContext,
   ProcessableMessage,
@@ -16,20 +18,23 @@ import { genJobIdSync } from './utils.ts';
 import { parseCronExpression } from 'cron-schedule';
 
 /**
- * TaskManager - High-level API for managing tasks/jobs
+ * Remq - High-level API for managing tasks/jobs
  *
  * Based on old worker's robust processJob logic with cleaner naming
  */
-export class TaskManager<T = unknown> {
-  private static instance: TaskManager<any>;
+export class Remq<
+  TApp extends Record<string, unknown> = Record<string, unknown>,
+> {
+  private static instance: Remq<any>;
 
   private readonly db: RedisConnection;
   private readonly streamdb: RedisConnection;
-  private readonly ctx: T & { emit: EmitFunction };
+  private readonly ctx: TApp & { emit: EmitFunction };
   private readonly concurrency: number;
-  private readonly processorOptions: TaskManagerOptions<T>['processor'];
+  private readonly processorOptions: TaskManagerOptions<TApp>['processor'];
+  private readonly debug: boolean;
 
-  private handlers: Map<string, TaskHandler<T, any>> = new Map();
+  private handlers: Map<string, TaskHandler<TApp, any>> = new Map();
   private handlerDebounce: Map<string, DebounceManager> = new Map(); // handlerKey -> DebounceManager
   private processor?: Processor;
   private queueStreams: Set<string> = new Set();
@@ -51,6 +56,7 @@ export class TaskManager<T = unknown> {
   #taskFinishedUnsubscribe?: () => void;
   private readonly taskIdToSockets = new Map<string, Set<WebSocket>>();
   private readonly socketToTaskIds = new Map<WebSocket, Set<string>>();
+  #workerRunIndex = 0; // used for debug log worker_id (0..concurrency-1)
 
   // Job status messages (like old worker line 71-80)
   private readonly JOB_STATUS_MESSAGES = {
@@ -61,49 +67,46 @@ export class TaskManager<T = unknown> {
     failed: (error: string) => `Job failed: ${error}`,
   };
 
-  private constructor(options: TaskManagerOptions<T>) {
+  private constructor(options: TaskManagerOptions<TApp>) {
     this.db = options.db;
     this.streamdb = options.streamdb || options.db;
     this.concurrency = options.concurrency ?? 1;
     this.processorOptions = options.processor || {};
+    this.debug = options.debug ?? false;
 
     this.ctx = {
-      ...(options.ctx || {} as T),
+      ...(options.ctx || {} as TApp),
       emit: this.emit.bind(this),
-    } as T & { emit: EmitFunction };
+    } as TApp & { emit: EmitFunction };
     this.expose = options.expose;
   }
 
-  static init<T = unknown>(options: TaskManagerOptions<T>): TaskManager<T> {
-    if (!TaskManager.instance) {
-      TaskManager.instance = new TaskManager(options);
+  static create<TApp extends Record<string, unknown> = Record<string, unknown>>(
+    options: TaskManagerOptions<TApp>,
+  ): Remq<TApp> {
+    if (!Remq.instance) {
+      Remq.instance = new Remq(options);
     }
-    return TaskManager.instance as TaskManager<T>;
+    return Remq.instance as Remq<TApp>;
   }
 
-  static getInstance<T = unknown>(): TaskManager<T> {
-    return TaskManager.instance as TaskManager<T>;
+  static getInstance<
+    TApp extends Record<string, unknown> = Record<string, unknown>,
+  >(): Remq<TApp> {
+    return Remq.instance as Remq<TApp>;
   }
 
   /**
-   * Register a handler for an event/task
+   * Register a handler for an event/task. Event names support dot notation (e.g. 'host.sync', 'user.welcome').
+   * Returns this for fluent chaining.
    */
-  async registerHandler<D = unknown>(
-    options: {
-      handler: TaskHandler<T, D>;
-      event: string;
-      queue?: string;
-      options?: {
-        repeat?: {
-          pattern: string;
-        };
-        attempts?: number;
-        debounce?: number;
-      };
-    },
-  ): Promise<void> {
-    const { handler, event, queue = 'default', options: jobOptions } = options;
-    const debounce = jobOptions?.debounce;
+  on<D = unknown>(
+    event: string,
+    handler: TaskHandler<TApp, D>,
+    options?: HandlerOptions,
+  ): this {
+    const queue = options?.queue ?? 'default';
+    const debounce = options?.debounce;
 
     if (!event) {
       throw new Error('event is required');
@@ -114,75 +117,45 @@ export class TaskManager<T = unknown> {
     }
 
     const handlerKey = `${queue}:${event}`;
-    this.handlers.set(handlerKey, handler as TaskHandler<T, any>);
+    this.handlers.set(handlerKey, handler as TaskHandler<TApp, any>);
 
     const streamKey = `${queue}-stream`;
     this.queueStreams.add(streamKey);
 
-    // Store debounce manager per handler (if provided in options.debounce)
     if (debounce !== undefined) {
-      const debounceSeconds = Math.ceil(debounce / 1000); // Convert ms to seconds
+      const debounceSeconds = Math.ceil(debounce / 1000);
       const debounceManager = new DebounceManager(debounceSeconds, undefined);
       this.handlerDebounce.set(handlerKey, debounceManager);
     }
 
-    // If repeat pattern is provided, emit initial job for cron (like old queue-manager line 165-167)
-    // The old system just calls emit - it doesn't check for existing cron
-    // Cron jobs use the same ID generation as regular jobs (genJobId based on name and data)
-    // We need to store the Redis key when emitting to match old behavior
-    if (jobOptions?.repeat?.pattern) {
-      // Don't use hash - use same ID format as regular jobs for consistency
-      // The old system uses genJobId which creates: ${name}:${hashOfData}
-      // For cron jobs with empty data, this will be deterministic
-      this.emit({
-        event,
+    // Cron bootstrap: fire-and-forget (no await)
+    if (options?.repeat?.pattern) {
+      this.emit(event, {}, {
         queue,
-        data: {},
-        options: {
-          ...jobOptions,
-        },
+        repeat: { pattern: options.repeat.pattern },
+        attempts: options.attempts,
       });
     }
+    return this;
   }
 
   /**
    * Emit/trigger a task/event. Returns the job id so callers can track completion.
    */
-  emit(args: {
-    event: string;
-    queue?: string;
-    data?: unknown;
-    options?: {
-      id?: string;
-      priority?: number;
-      delayUntil?: Date;
-      retryCount?: number;
-      retryDelayMs?: number;
-      repeat?: {
-        pattern: string;
-      };
-      attempts?: number;
-      [key: string]: unknown;
-    };
-  }): string {
-    const {
-      event,
-      queue = 'default',
-      data = {},
-      options = {},
-    } = args;
+  emit(event: string, data?: unknown, options?: EmitOptions): string {
+    const opts = options ?? {};
+    const queue = opts.queue ?? 'default';
+    const payload = data ?? {};
 
     if (!event) {
       throw new Error('event is required');
     }
 
-    // Use same ID generation as old worker (genJobId based on name and data)
-    // Don't special-case cron jobs - let genJobId handle it
-    const jobId = options.id || genJobIdSync(event, data);
+    const jobId = opts.id ?? genJobIdSync(event, payload);
 
-    let delayUntil = options.delayUntil || new Date();
-    if (options.repeat?.pattern) {
-      delayUntil = parseCronExpression(options.repeat.pattern).getNextDate(
+    let delayUntil = opts.delay ?? new Date();
+    if (opts.repeat?.pattern) {
+      delayUntil = parseCronExpression(opts.repeat.pattern).getNextDate(
         new Date(),
       );
     }
@@ -192,17 +165,17 @@ export class TaskManager<T = unknown> {
       state: {
         name: event,
         queue,
-        data,
-        options,
+        data: payload,
+        options: opts,
       },
-      status: options.repeat?.pattern ? 'delayed' : 'waiting',
+      status: opts.repeat?.pattern ? 'delayed' : 'waiting',
       delayUntil: delayUntil.getTime(),
       lockUntil: Date.now(),
-      priority: options.priority ?? 0,
-      retryCount: options.retryCount ?? (options.attempts ?? 0),
-      retryDelayMs: options.retryDelayMs ?? 1000,
+      priority: opts.priority ?? 0,
+      retryCount: opts.retryCount ?? (opts.attempts ?? 0),
+      retryDelayMs: opts.retryDelayMs ?? 1000,
       retriedAttempts: 0,
-      repeatCount: options.repeat?.pattern ? 1 : 0,
+      repeatCount: opts.repeat?.pattern ? 1 : 0,
       repeatDelayMs: 0,
       logs: [{
         message: 'Added to the queue',
@@ -218,9 +191,11 @@ export class TaskManager<T = unknown> {
     });
 
     const stateKey = `queues:${queue}:${jobId}:${jobData.status}`;
-    this.#setJobState(stateKey, JSON.stringify(jobData)).catch((err: unknown) => {
-      console.error(`Error storing job state:`, err);
-    });
+    this.#setJobState(stateKey, JSON.stringify(jobData)).catch(
+      (err: unknown) => {
+        console.error(`Error storing job state:`, err);
+      },
+    );
     return jobId;
   }
 
@@ -261,7 +236,15 @@ export class TaskManager<T = unknown> {
   async #xadd(streamKey: string, dataJson: string): Promise<string | null> {
     const maxLen = this.processorOptions?.streamMaxLen;
     if (typeof maxLen === 'number' && maxLen > 0) {
-      return await this.streamdb.xadd(streamKey, 'MAXLEN', '~', maxLen, '*', 'data', dataJson);
+      return await this.streamdb.xadd(
+        streamKey,
+        'MAXLEN',
+        '~',
+        maxLen,
+        '*',
+        'data',
+        dataJson,
+      );
     }
     return await this.streamdb.xadd(streamKey, '*', 'data', dataJson);
   }
@@ -281,7 +264,10 @@ export class TaskManager<T = unknown> {
   /**
    * Trim oldest log entries when maxLogsPerTask is set (self-cleaning).
    */
-  #trimLogs(jobEntry: { logs?: unknown[] }, maxLogsPerTask: number | undefined): void {
+  #trimLogs(
+    jobEntry: { logs?: unknown[] },
+    maxLogsPerTask: number | undefined,
+  ): void {
     if (
       typeof maxLogsPerTask !== 'number' ||
       maxLogsPerTask <= 0 ||
@@ -304,14 +290,20 @@ export class TaskManager<T = unknown> {
       return {
         update: () => {
           throw new Error(
-            'ctx.socket.update() requires TaskManager to be started with option expose (WebSocket port). Real-time updates are only available when the task was triggered via WebSocket.',
+            'ctx.socket.update() requires Remq to be started with option expose (WebSocket port). Real-time updates are only available when the task was triggered via WebSocket.',
           );
         },
       };
     }
     return {
       update: (data: unknown, progress?: number) =>
-        this.sendTaskUpdate({ id, event, queue, data, progress: progress ?? 0 }),
+        this.sendTaskUpdate({
+          id,
+          event,
+          queue,
+          data,
+          progress: progress ?? 0,
+        }),
     };
   }
 
@@ -419,7 +411,7 @@ export class TaskManager<T = unknown> {
     // Stop existing processor if it exists (to recreate with all current streams)
     if (this.processor) {
       this.processor.stop();
-      await this.processor.waitForActiveTasks();
+      await this.drain();
     }
 
     // Always recreate processor to include all currently registered handlers/queues
@@ -439,7 +431,7 @@ export class TaskManager<T = unknown> {
       this.wsServer = createWsGateway({
         port: this.expose,
         hostname: '0.0.0.0',
-        taskManager: this,
+        remq: this,
         onConnection: (ws, req) => this.handleWsConnection(ws, req),
       });
       this.#taskFinishedUnsubscribe = this.onTaskFinished((payload) => {
@@ -469,12 +461,12 @@ export class TaskManager<T = unknown> {
           }
         }
       });
-      console.log(`TaskManager WS gateway listening on 0.0.0.0:${this.expose}`);
+      console.log(`Remq WS gateway listening on 0.0.0.0:${this.expose}`);
     }
 
     const streamList = Array.from(this.queueStreams).join(', ');
     console.log(
-      `TaskManager started with ${this.queueStreams.size} queue(s) [${streamList}] and concurrency ${this.concurrency}`,
+      `Remq started with ${this.queueStreams.size} queue(s) [${streamList}] and concurrency ${this.concurrency}`,
     );
   }
 
@@ -484,12 +476,15 @@ export class TaskManager<T = unknown> {
    * If the client connected with header x-get-broadcast: true, they receive all task_update / task_retry / task_finished.
    */
   private handleWsConnection(ws: WebSocket, req: Request): void {
-    const wantBroadcast = req.headers.get('x-get-broadcast')?.toLowerCase() === 'true';
+    const wantBroadcast =
+      req.headers.get('x-get-broadcast')?.toLowerCase() === 'true';
     if (wantBroadcast) {
       this.broadcastSockets.add(ws);
     }
     const addTaskForSocket = (taskId: string) => {
-      if (!this.socketToTaskIds.has(ws)) this.socketToTaskIds.set(ws, new Set());
+      if (!this.socketToTaskIds.has(ws)) {
+        this.socketToTaskIds.set(ws, new Set());
+      }
       this.socketToTaskIds.get(ws)!.add(taskId);
       if (!this.taskIdToSockets.has(taskId)) {
         this.taskIdToSockets.set(taskId, new Set());
@@ -525,12 +520,10 @@ export class TaskManager<T = unknown> {
         };
         // Accept both { type: 'emit', event, ... } and { event, data, options }
         if (typeof msg?.event === 'string') {
-          const taskId = this.emit({
-            event: msg.event,
+          const taskId = this.emit(msg.event, msg.data, {
             queue: msg.queue,
-            data: msg.data,
-            options: msg.options,
-          });
+            ...msg.options,
+          } as EmitOptions);
           addTaskForSocket(taskId);
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'queued', taskId }));
@@ -557,31 +550,48 @@ export class TaskManager<T = unknown> {
     }
     if (this.processor) {
       this.processor.stop();
-      await this.processor.waitForActiveTasks();
+      await this.drain();
     }
     this.isStarted = false;
   }
 
   /**
-   * Pause a queue (stops processing new jobs from this queue)
+   * Wait for all active tasks to finish (e.g. before shutdown).
    */
-  async pauseQueue(queue: string): Promise<void> {
-    const pausedKey = `queues:${queue}:paused`;
-    await this.db.set(pausedKey, 'true');
+  async drain(): Promise<void> {
+    if (this.processor) {
+      await this.processor.waitForActiveTasks();
+    }
   }
 
   /**
-   * Resume a queue (resumes processing jobs from this queue)
+   * Pause one or all queues (stops processing new jobs). With no arg, pauses all registered queues.
    */
-  async resumeQueue(queue: string): Promise<void> {
-    const pausedKey = `queues:${queue}:paused`;
-    await this.db.del(pausedKey);
+  async pause(queue?: string): Promise<void> {
+    const queues = queue != null
+      ? [queue]
+      : Array.from(this.queueStreams).map((k) => k.replace(/-stream$/, ''));
+    for (const q of queues) {
+      await this.db.set(`queues:${q}:paused`, 'true');
+    }
   }
 
   /**
-   * Check if a queue is paused
+   * Resume one or all queues. With no arg, resumes all registered queues.
    */
-  async isQueuePaused(queue: string): Promise<boolean> {
+  async resume(queue?: string): Promise<void> {
+    const queues = queue != null
+      ? [queue]
+      : Array.from(this.queueStreams).map((k) => k.replace(/-stream$/, ''));
+    for (const q of queues) {
+      await this.db.del(`queues:${q}:paused`);
+    }
+  }
+
+  /**
+   * Check if a queue is paused.
+   */
+  async isPaused(queue: string): Promise<boolean> {
     const pausedKey = `queues:${queue}:paused`;
     const isPaused = await this.db.get(pausedKey);
     return isPaused === 'true';
@@ -664,8 +674,8 @@ export class TaskManager<T = unknown> {
         }
         // Mark as processed after handler completes
         const originalHandler = handler;
-        const wrappedHandler = async (task: any, ctx: any) => {
-          await originalHandler(task, ctx);
+        const wrappedHandler = async (ctx: any) => {
+          await originalHandler(ctx);
           debounceManager.markProcessed(
             processableMessage as {
               id: string;
@@ -705,8 +715,10 @@ export class TaskManager<T = unknown> {
         concurrency: this.concurrency,
         group: 'processor',
         streamMaxLen: this.processorOptions?.streamMaxLen,
+        pollIntervalMs: this.processorOptions?.pollIntervalMs,
         read: {
-          count: this.processorOptions?.readCount ?? 200,
+          count: this.processorOptions?.read?.count ?? this.processorOptions?.readCount ?? 200,
+          blockMs: this.processorOptions?.read?.blockMs,
         },
       },
       streamdb: this.streamdb,
@@ -723,7 +735,7 @@ export class TaskManager<T = unknown> {
     queueName: string,
     state: any,
     stateAny: any,
-    handler: TaskHandler<T, any>,
+    handler: TaskHandler<TApp, any>,
     processableMessage: ProcessableMessage,
   ): Promise<void> {
     try {
@@ -777,19 +789,29 @@ export class TaskManager<T = unknown> {
         `queues:${queueName}:${processingData.id}:${processingData.status}`;
       await this.#setJobState(processingKey, JSON.stringify(processingData));
 
-      // Process the job (like old worker line 412); inject per-task socket for real-time WS updates
-      const ctxWithUpdate = {
+      if (this.debug) {
+        const pid = typeof Deno !== 'undefined' && Deno.pid != null
+          ? Deno.pid
+          : (typeof process !== 'undefined' && (process as { pid?: number }).pid) ?? '?';
+        const workerId = this.#workerRunIndex++ % this.concurrency; // logical slot 0..concurrency-1
+        console.log('[remq] PID', pid, 'worker_id', workerId, 'job_id', jobId);
+      }
+
+      // Build unified ctx (job identity + payload + capabilities + app context)
+      const ctx = {
         ...this.ctx,
-        socket: this.#createSocketContext(jobId, state.name!, state.queue!),
-      } as T & { emit: EmitFunction; socket: TaskSocketContext };
-      await handler({
+        id: jobId,
         name: state.name!,
         queue: state.queue!,
+        status: processingData.status,
+        retryCount: jobEntry.retryCount ?? 0,
+        retriedAttempts: jobEntry.retriedAttempts ?? 0,
         data: state.data,
-        options: stateAny?.options,
         logger: jobEntry.logger,
-        ...processingData,
-      } as any, ctxWithUpdate);
+        emit: this.emit.bind(this),
+        socket: this.#createSocketContext(jobId, state.name!, state.queue!),
+      };
+      await handler(ctx);
 
       // After processing, get any logs (like old worker line 414-419)
       const currentJobData = await this.db.get(processingKey);
@@ -851,8 +873,7 @@ export class TaskManager<T = unknown> {
         errorMessage.includes('No handlers registered') ||
         errorMessage.includes('is undefined');
 
-      const willRetry =
-        jobEntry.retryCount > 0 && !isConfigError;
+      const willRetry = jobEntry.retryCount > 0 && !isConfigError;
 
       const failedData = {
         ...jobEntry,

@@ -172,5 +172,5 @@ await run;
 ## Next Steps
 
 - [Processor API](/reference/processor)
-- [TaskManager API](/reference/task-manager)
+- [Remq API](/reference/task-manager)
 - [Sdk API](/reference/sdk)

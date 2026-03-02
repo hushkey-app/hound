@@ -145,5 +145,5 @@ await run;
 ## Next Steps
 
 - [Consumer API](/reference/consumer)
-- [TaskManager API](/reference/task-manager)
+- [Remq API](/reference/task-manager)
 - [Sdk API](/reference/sdk)

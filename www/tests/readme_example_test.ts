@@ -9,15 +9,15 @@ Deno.test("README includes minimal up-and-running example flow", async () => {
     "README should include an up-and-running example section.",
   );
   assert(
-    content.includes("TaskManager.init"),
-    "README example should include TaskManager.init.",
+    content.includes("Remq.create"),
+    "README example should include Remq.create.",
   );
   assert(
-    content.includes("registerHandler"),
-    "README example should include registerHandler.",
+    content.includes(".on(") || content.includes("remq.on"),
+    "README example should include on() for handlers.",
   );
   assert(
-    content.includes("emit({"),
+    content.includes("emit(") && (content.includes("remq.emit") || content.includes("Remq")),
     "README example should include emit call.",
   );
   assert(

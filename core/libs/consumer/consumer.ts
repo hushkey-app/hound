@@ -51,6 +51,7 @@ export class Consumer extends EventTarget {
       this.consumerId,
       options.streamMaxLen,
       options.read?.count ?? 200,
+      options.read?.blockMs ?? 1000,
     );
   }
 

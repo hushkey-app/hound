@@ -1,11 +1,11 @@
-# TaskManager
+# Remq
 
 High-level API for task/job management. Simple, developer-friendly interface built on top of Consumer + Processor.
 
 ## Features
 
 - **Simple API** - Easy to use, similar to the original ProcessingManager
-- **registerHandler()** - Register handlers for events/jobs
+- **on()** - Register handlers for events/jobs (sync, fluent; event names support dot notation e.g. 'host.sync', 'user.welcome')
 - **emit()** - Trigger jobs/events
 - **Built on Consumer + Processor** - Gets all the benefits (retries, DLQ, debouncing)
 - **Automatic queue management** - Queues are created automatically
@@ -16,7 +16,7 @@ High-level API for task/job management. Simple, developer-friendly interface bui
 ### Basic Setup
 
 ```typescript
-import { TaskManager } from './mod.ts';
+import { Remq } from './mod.ts';
 import { Redis } from 'ioredis';
 
 const db = new Redis({
@@ -25,8 +25,8 @@ const db = new Redis({
   db: 1,
 });
 
-// Initialize TaskManager
-const taskManager = TaskManager.init({
+// Initialize Remq
+const taskManager = Remq.create({
   db,
   ctx: {}, // Your app context
   concurrency: 4,
@@ -39,25 +39,19 @@ const taskManager = TaskManager.init({
   },
 });
 
-// Register handlers
-taskManager.registerHandler({
-  handler: async (job, ctx) => {
-    console.log('Processing:', job.name, job.data);
-    await job.logger?.('Job started');
-    
+// Register handlers (fluent: .on().on()...)
+taskManager
+  .on('my-event', async (ctx) => {
+    console.log('Processing:', ctx.name, ctx.data);
+    await ctx.logger('Job started');
+
     // Do work...
-    
+
     // Emit child jobs if needed
-    ctx.emit({
-      event: 'child-job',
-      data: { parentId: job.data.id },
-    });
-    
-    await job.logger?.('Job completed');
-  },
-  event: 'my-event',
-  queue: 'default',
-});
+    ctx.emit('child-job', { parentId: ctx.data.id });
+
+    await ctx.logger('Job completed');
+  });
 
 // Start processing
 await taskManager.start();
@@ -66,38 +60,22 @@ await taskManager.start();
 ### With Cron/Repeatable Jobs
 
 ```typescript
-taskManager.registerHandler({
-  handler: async (job, ctx) => {
-    console.log('Cron job running:', new Date());
-  },
-  event: 'daily-report',
-  queue: 'scheduler',
-  options: {
-    repeat: {
-      pattern: '0 0 * * *', // Every day at midnight
-    },
-  },
-});
+taskManager.on('daily-report', async (ctx) => {
+  console.log('Cron job running:', new Date());
+}, { queue: 'scheduler', repeat: { pattern: '0 0 * * *' } }); // Every day at midnight
 ```
 
 ### Emit Jobs
 
 ```typescript
-// Emit a simple job
-taskManager.emit({
-  event: 'process-user',
-  data: { userId: '123' },
-});
+// Emit a simple job (queue defaults to 'default')
+taskManager.emit('process-user', { userId: '123' });
 
 // Emit with options
-taskManager.emit({
-  event: 'send-email',
+taskManager.emit('send-email', { to: 'user@example.com' }, {
   queue: 'emails',
-  data: { to: 'user@example.com' },
-  options: {
-    retryCount: 3,
-    delayUntil: new Date(Date.now() + 60000), // Delay 1 minute
-  },
+  retryCount: 3,
+  delay: new Date(Date.now() + 60000), // Delay 1 minute
 });
 ```
 
@@ -110,7 +88,7 @@ interface AppContext {
   config: Config;
 }
 
-const taskManager = TaskManager.init({
+const taskManager = Remq.create<AppContext>({
   db: redisClient,
   ctx: {
     db: myDatabase,
@@ -120,29 +98,20 @@ const taskManager = TaskManager.init({
   concurrency: 4,
 });
 
-taskManager.registerHandler(
-  async (job, ctx) => {
-    // Access your context
-    const user = await ctx.db.getUser(job.data.userId);
-    await ctx.cache.set(`user:${user.id}`, user);
-    
-    // Emit new jobs
-    ctx.emit({
-      event: 'notify-user',
-      data: { userId: user.id },
-    });
-  },
-  {
-    event: 'process-user',
-  },
-);
+taskManager.on('process-user', async (ctx) => {
+  // ctx = TaskContext<AppContext> — job identity + data + app context
+  const user = await ctx.db.getUser(ctx.data.userId);
+  await ctx.cache.set(`user:${user.id}`, user);
+
+  ctx.emit('notify-user', { userId: user.id });
+});
 ```
 
 ## API
 
-### `TaskManager.init(options)`
+### `Remq.create(options)`
 
-Initialize TaskManager (singleton pattern).
+Create or retrieve the singleton Remq instance.
 
 **Options:**
 - `db: RedisConnection` - Redis connection for job storage
@@ -151,33 +120,30 @@ Initialize TaskManager (singleton pattern).
 - `streamdb?: RedisConnection` - Optional separate Redis connection for streams
 - `processor?: { retry?, dlq?, debounce?, ignoreConfigErrors? }` - Processor options
 
-### `registerHandler(options)`
+### `on(event, handler, options?)`
 
-Register a handler for an event/job.
+Register a handler for an event/task. Sync, returns `this` for chaining. Event names support dot notation (e.g. `'host.sync'`, `'user.welcome'`).
 
-**Options:**
-- `handler: TaskHandler<T, D>` - Handler function
-- `event: string` - Event/Job name
-- `queue?: string` - Queue name (defaults to 'default')
-- `options?: { repeat?, attempts? }` - Job options (for cron)
+**Parameters:**
+- `event: string` - Event/task name
+- `handler: TaskHandler<TApp, D>` - Handler function receiving single `ctx: TaskContext<TApp, D>`
+- `options?: HandlerOptions` - `{ queue?, repeat?, attempts?, debounce? }`
 
 **Handler signature:**
 ```typescript
-(job: {
-  name: string;
-  queue: string;
-  data?: D;
-  logger?: (message: string | object) => Promise<void>;
-}, ctx: T & { emit: EmitFunction }) => Promise<void> | void
+(ctx: TaskContext<TApp, TData>) => Promise<void> | void
 ```
 
-### `emit(args)`
+`TaskContext` includes: `id`, `name`, `queue`, `status`, `retryCount`, `retriedAttempts`, `data`, `logger`, `emit`, `socket`, plus app context (TApp) merged onto `ctx`.
 
-Emit/trigger a job/event.
+### `emit(event, data?, options?)`
 
-**Args:**
+Emit/trigger a task/event. Returns job id.
+
+**Parameters:**
 - `event: string` - Event name
-- `queue?: string` - Queue name (defaults to 'default')
+- `data?: unknown` - Payload (default `{}`)
+- `options?: EmitOptions` - `queue` (default `'default'`), `id?`, `priority?`, `delay?`, `retryCount?`, `retryDelayMs?`, `repeat?`, `attempts?`
 - `data?: unknown` - Job data (defaults to `{}`)
 - `options?: { ... }` - Job options:
   - `id?: string` - Custom job id (defaults to hash of event + data)
@@ -195,7 +161,19 @@ Start processing jobs. Creates consumer groups and starts processors.
 
 ### `stop()`
 
-Stop processing jobs. Waits for active tasks to complete.
+Stop processing jobs. Waits for active tasks to complete (via `drain()`).
+
+### `drain()`
+
+Wait for all active tasks to finish. Use before shutdown or when reconfiguring.
+
+### `pause(queue?)` / `resume(queue?)`
+
+Pause or resume queue(s). With no argument, pauses or resumes all registered queues; with a queue name, only that queue.
+
+### `isPaused(queue)`
+
+Returns whether the given queue is paused.
 
 ### `getContext()`
 
@@ -207,56 +185,29 @@ Get the context object (useful for accessing emit function outside handlers).
 
 Handler function invoked for each job.
 
-**Parameters:**
-- `job.name: string` - Event/job name
-- `job.queue: string` - Queue name the job came from
-- `job.data?: D` - Job payload (optional)
-- `job.logger?: (message: string | object) => Promise<void>` - Logger that writes to job logs (optional)
-- `ctx: T & { emit: EmitFunction }` - Your context plus `emit` for enqueueing follow-up jobs
-
-**Defaults:**
-- Generic defaults: `T = unknown`, `D = unknown`
-- `job.data` and `job.logger` are optional
+**TaskContext fields:** `id`, `name`, `queue`, `status`, `retryCount`, `retriedAttempts`, `data`, `logger`, `emit`, `socket`, plus app context (TApp) merged onto `ctx`.
 
 **Where used:**
-- Passed to `registerHandler()` and stored per `queue:event`
-- Invoked inside TaskManager when processing messages in `processJob()`
+- Passed to `on(event, handler, options?)` and stored per `queue:event`
+- Invoked inside Remq when processing messages in `processJob()`
 
-### `EmitFunction`
+### `EmitFunction` / `EmitOptions`
 
-Function for emitting a new job/event.
+`ctx.emit(event, data?, options?)` and `Remq.emit(event, data?, options?)` — both return job id.
 
-**Parameters:**
-- `event: string` - Event/job name (required)
-- `queue?: string` - Queue name (defaults to `'default'`)
-- `data?: unknown` - Job payload (defaults to `{}`)
-- `options?: { ... }`:
-  - `id?: string` - Custom job id (defaults to hash of event + data)
-  - `priority?: number` - Higher values process first (default: `0`)
-  - `delayUntil?: Date` - When the job becomes eligible
-  - `retryCount?: number` - Initial retry budget
-  - `retryDelayMs?: number` - Delay between retries (default: `1000`)
-  - `repeat?: { pattern: string }` - Cron pattern (e.g. `"0 * * * *"`)
-  - `attempts?: number` - Shorthand for `retryCount`
-  - `debounce?: number` - Debounce window in milliseconds
-
-**Defaults (applied in `TaskManager.emit()`):**
-- `queue` defaults to `'default'`
-- `data` defaults to `{}`
-- `options` defaults to `{}`
-- `options.id` defaults to `genJobIdSync(event, data)`
-- `options.priority` defaults to `0`
-- `options.retryCount` defaults to `options.attempts ?? 0`
-- `options.retryDelayMs` defaults to `1000`
-- `options.delayUntil` defaults to `new Date()`, or next cron occurrence when `repeat.pattern` is set
+**EmitOptions:** `queue?` (default `'default'`), `id?`, `priority?`, `delay?` (Date), `retryCount?`, `retryDelayMs?`, `repeat?`, `attempts?`. `delay` replaces the previous `delayUntil`; internally mapped to run-at time.
 
 **Where used:**
-- Exposed as `TaskManager.emit()` and injected into handler context (`ctx.emit`)
-- Also called internally when `registerHandler()` is given a `repeat.pattern`
+- Exposed as `Remq.emit()` and injected onto handler context as `ctx.emit`
+- Cron bootstrap in `on()` uses fire-and-forget `emit(event, {}, { queue, repeat, attempts })`
 
-### `TaskManagerOptions<T>`
+### `HandlerOptions`
 
-Options for `TaskManager.init()`.
+Options for `on(event, handler, options?)`: `queue?`, `repeat?`, `attempts?`, `debounce?`.
+
+### `TaskManagerOptions<TApp>`
+
+Options for `Remq.create()`.
 
 **Parameters:**
 - `db: RedisConnection` - Redis connection for job storage (required)
@@ -273,33 +224,15 @@ Options for `TaskManager.init()`.
 - `ctx` defaults to `{}` and is augmented with `emit`
 
 **Where used:**
-- Stored in TaskManager constructor
+- Stored in Remq constructor
 - `concurrency` passed into `Processor` consumer options
 - `streamdb` used by `emit()` and `ensureConsumerGroup()`
 - `processor` spread into `new Processor(...)` in `createUnifiedProcessor()`
-- `expose` is currently reserved (not read by TaskManager)
-
-### `RegisterHandlerOptions<T, D>`
-
-Options for `TaskManager.registerHandler()`.
-
-**Parameters:**
-- `handler: TaskHandler<T, D>` - Handler function (required)
-- `event: string` - Event/job name (required)
-- `queue?: string` - Queue name (defaults to `'default'`)
-- `options?: { repeat?, attempts?, debounce?, ... }` - Job options (cron/repeat and debounce)
-
-**Defaults:**
-- `queue` defaults to `'default'`
-
-**Where used:**
-- Handler is stored under `${queue}:${event}`
-- `options.debounce` creates a per-handler `DebounceManager`
-- `options.repeat.pattern` triggers an initial `emit()` to seed cron jobs
+- `expose` is currently reserved (not read by Remq)
 
 ## Integration with Consumer + Processor
 
-TaskManager uses Consumer + Processor internally, so you get all their features:
+Remq uses Consumer + Processor internally, so you get all their features:
 
 - ✅ Stable consumer IDs
 - ✅ Correct ACK timing
@@ -312,7 +245,7 @@ TaskManager uses Consumer + Processor internally, so you get all their features:
 ## Architecture
 
 ```
-TaskManager (High-level API)
+Remq (High-level API)
   ↓
 Processor (Policy layer: retries, delays, DLQ, debounce)
   ↓

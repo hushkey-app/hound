@@ -60,7 +60,7 @@ export default defineConfig({
         {
           text: 'API Reference',
           items: [
-            { text: 'TaskManager', link: '/reference/task-manager' },
+            { text: 'Remq', link: '/reference/task-manager' },
             { text: 'Consumer', link: '/reference/consumer' },
             { text: 'Processor', link: '/reference/processor' },
             { text: 'Sdk', link: '/reference/sdk' },

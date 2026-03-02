@@ -21,14 +21,14 @@ Here's a simple example to get you started:
 
 ```typescript
 import Redis from 'npm:ioredis';
-import { TaskManager } from 'npm:@leotermine/tasker';
+import { Remq } from 'npm:@leotermine/tasker';
 
 const db = new Redis({
   host: '127.0.0.1',
   port: 6379,
 });
 
-const taskManager = TaskManager.init({ db });
+const remq = Remq.create({ db });
 
 await taskManager.registerHandler({
   event: 'send-welcome',
@@ -48,10 +48,10 @@ console.log('Job queued!');
 ```
 
 For full options and types, see the
-[TaskManager API Reference](/reference/task-manager).
+[Remq API Reference](/reference/task-manager).
 
 ## What's Next?
 
 - Learn about [Task Management](/guide/task-management)
 - Explore [Message Queues](/guide/message-queues)
-- Check out the [API Reference](/reference/task-manager)
+- Check out the [Remq API Reference](/reference/task-manager)

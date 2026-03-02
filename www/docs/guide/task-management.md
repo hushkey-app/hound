@@ -1,11 +1,11 @@
 ---
 title: Task Management
-description: Define jobs, schedules, and retries with TaskManager.
+description: Define jobs, schedules, and retries with Remq.
 ---
 
 # Task Management
 
-Use the `TaskManager` to register handlers, emit jobs, and control scheduling
+Use Remq to register handlers, emit jobs, and control scheduling
 and retries.
 
 ## Core Concepts
@@ -20,14 +20,14 @@ Define how a job should be processed. Handler options can add repeats,
 attempt limits, and debounce windows.
 
 For full options and types, see the
-[TaskManager API Reference](/reference/task-manager).
+[Remq API Reference](/reference/task-manager).
 
 ```typescript
 import Redis from 'npm:ioredis';
-import { TaskManager } from 'npm:@leotermine/tasker';
+import { Remq } from 'npm:@leotermine/tasker';
 
 const db = new Redis({ host: '127.0.0.1', port: 6379 });
-const taskManager = TaskManager.init({ db });
+const remq = Remq.create({ db });
 
 await taskManager.registerHandler({
   event: 'send-email',
@@ -67,6 +67,6 @@ await taskManager.emit({
 
 ## Next Steps
 
-- Explore all options in the [TaskManager API](/reference/task-manager)
+- Explore all options in the [Remq API](/reference/task-manager)
 - Learn about [Message Queues](/guide/message-queues)
 - Understand [Consumers](/guide/consumers)

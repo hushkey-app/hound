@@ -1,4 +1,4 @@
-import { TaskManager } from '@core/libs/task-manager/mod.ts';
+import { Remq } from '@core/libs/task-manager/mod.ts';
 import { Redis } from 'ioredis';
 
 // Create Redis Option
@@ -29,28 +29,24 @@ const contextApp = {
   foo: 'bar',
 };
 
-// initialize the task manager (using new core API)
-const remq = TaskManager.init({
+// Initialize Remq (singleton)
+const remq = Remq.create({
   db,
   streamdb, // Optional: separate connection for streams
-  ctx: contextApp,
+  ctx: contextApp as { foo: string },
   expose: 4000, // WebSocket port; clients can send header x-get-broadcast: true to receive all task updates
-  concurrency: 2, // the number of messages to process concurrently uses workers steal process strategy
-  processor: { // [default] processor options
-    debounce: 60 * 1000, // 1 minute (debounce is in ms; 60 minutes would be 60 * 60 * 1000)
-    dlq: {
-      streamKey: 'remq-dlq', // the stream key to send the failed messages to
-      shouldSendToDLQ: (message, error, attempts) => {
-        return attempts >= 3; // send to dlq if the message has been retried 3 times
-      },
+  concurrency: 10, // the number of messages to process concurrently uses workers steal process strategy
+  debug: false, // log PID, worker_id (slot 0..concurrency-1), job_id (e.g. [remq] PID 12345 worker_id 2 job_id on-request-1)
+  processor: {
+    // Throughput tip: higher pollIntervalMs lets the stream fill; short blockMs returns quickly with a batch.
+    // Then high concurrency (e.g. 10) drains the batch in parallel — often faster than aggressive polling.
+    read: {
+      blockMs: 1000, // short block = get what's there fast; lower (e.g. 10) for throughput + fill-between-polls (default 1000)
+      count: 200, // max messages per batch (default 200)
     },
-    retry: {
-      // maxRetries: 5,
-      // retryDelayMs: 3000,
-      // shouldRetry: (error, attempt) => true,
-    },
+    pollIntervalMs: 1000, // let work accumulate between reads; then read + process with concurrency (default 3000)
     maxLogsPerTask: 100, // trim oldest logs; keeps Redis self-cleaning
-    streamMaxLen: 10000, // cap stream at add time + trim after read. Monitor: XLEN/MEMORY USAGE per stream if payloads are large
+    streamMaxLen: 3000, // cap stream at add time + trim after read. Monitor: XLEN/MEMORY USAGE per stream if payloads are large
     jobStateTtlSeconds: 604800, // 7 days; job state keys expire. Admin/SDK queries must handle missing keys (SCAN/GET)
     // readCount: 50, // optional: lower if message payloads are large (default 200)
   },

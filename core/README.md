@@ -4,18 +4,19 @@ Main modules for task/job processing with Redis Streams.
 
 ## API list
 
-### TaskManager (`libs/task-manager/task-manager.ts`)
+### Remq (`libs/task-manager/remq.ts`)
 
 | Method | Signature |
 |--------|-----------|
-| `init` | `static init<T>(options): TaskManager<T>` |
-| `registerHandler` | `registerHandler(options): Promise<void>` |
-| `emit` | `emit(args: { event, queue?, data?, options? }): string` (returns task id) |
+| `create` | `static create<TApp>(options): Remq<TApp>` |
+| `on` | `on(event, handler, options?): this` (sync, fluent) |
+| `emit` | `emit(event, data?, options?): string` (returns task id; queue in options) |
 | `start` | `start(): Promise<void>` |
 | `stop` | `stop(): Promise<void>` |
-| `pauseQueue` | `pauseQueue(queue: string): Promise<void>` |
-| `resumeQueue` | `resumeQueue(queue: string): Promise<void>` |
-| `isQueuePaused` | `isQueuePaused(queue: string): Promise<boolean>` |
+| `pause` | `pause(queue?: string): Promise<void>` — pause one or all queues |
+| `resume` | `resume(queue?: string): Promise<void>` — resume one or all queues |
+| `drain` | `drain(): Promise<void>` — wait for active tasks to finish |
+| `isPaused` | `isPaused(queue: string): Promise<boolean>` |
 
 ### Consumer (`libs/consumer/`)
 
@@ -54,17 +55,17 @@ Main modules for task/job processing with Redis Streams.
 | `getQueueStats` | `getQueueStats(queue): Promise<TaskStats>` |
 | `getQueues` | `getQueues(): Promise<string[]>` |
 | `getQueuesInfo` | `getQueuesInfo(): Promise<QueueInfo[]>` |
-| `pauseQueue` | `pauseQueue(queue): Promise<void>` |
-| `resumeQueue` | `resumeQueue(queue): Promise<void>` |
-| `isQueuePaused` | `isQueuePaused(queue): Promise<boolean>` |
-| `pauseJob` | `pauseJob(jobId, queue): Promise<AdminJobData \| null>` |
-| `resumeJob` | `resumeJob(jobId, queue): Promise<AdminJobData \| null>` |
+| `pause` | `pause(queue?): Promise<void>` |
+| `resume` | `resume(queue?): Promise<void>` |
+| `isPaused` | `isPaused(queue): Promise<boolean>` |
+| `pauseTask` | `pauseTask(taskId, queue): Promise<AdminJobData \| null>` |
+| `resumeTask` | `resumeTask(taskId, queue): Promise<AdminJobData \| null>` |
 
 ### Types
 
 | Type | Module |
 |------|--------|
-| `TaskManagerOptions`, `TaskHandler`, `EmitFunction`, `UpdateFunction`, `RegisterHandlerOptions` | `types/task-manager.ts` |
+| `TaskManagerOptions`, `TaskHandler`, `TaskContext`, `EmitFunction`, `EmitOptions`, `HandlerOptions`, `UpdateFunction` | `types/task-manager.ts` |
 | `ConsumerOptions`, `Message`, `MessageHandler`, `MessageContext`, `ConsumerEvents` | `types/` |
 | `ProcessorOptions`, `ProcessableMessage`, `RetryConfig`, `DLQConfig`, `DebounceConfig` | `types/processor.ts` |
 | `AdminJobData`, `ListJobsOptions`, `TaskStats`, `QueueInfo` | `types/admin.ts` |
@@ -75,7 +76,7 @@ Main modules for task/job processing with Redis Streams.
 
 Retry behavior depends on options at two levels. Both must allow retries.
 
-### Per-task level (`emit` / `registerHandler.options`)
+### Per-task level (`emit` / `on` options)
 
 | Option | Role |
 |--------|------|
@@ -94,7 +95,7 @@ Retry behavior depends on options at two levels. Both must allow retries.
 
 - **`attempts` and `retryCount` together** — Redundant. Use one.
 - **`shouldRetry` in emit options** — Invalid. `shouldRetry` is a processor callback, not an emit option.
-- **`debounce` in emit options** — Wrong level. Debounce is per-handler in `registerHandler`, not per emit.
+- **`debounce` in emit options** — Wrong level. Debounce is per-handler in `on()`, not per emit.
 
 ### How the combo works
 
@@ -106,7 +107,7 @@ Retry behavior depends on options at two levels. Both must allow retries.
 ```ts
 // Minimal: processor enables retries, per-task sets count
 processor: { retry: { maxRetries: 5 } },
-registerHandler({ event: 'foo', handler, options: { attempts: 3 } });  // 3 retries
+on('foo', handler, { attempts: 3 });  // 3 retries
 
 // Filter errors: retry network, skip validation
 processor: {
@@ -121,7 +122,7 @@ processor: {
 
 ## Real-time task updates: `ctx.socket.update` (BETA)
 
-When the TaskManager is started with `expose` (WebSocket gateway), tasks triggered over WebSocket can send **progressive updates** to the client. Use `ctx.socket.update(data, progress)` inside a handler to push real-time payloads to the socket that requested the task.
+When Remq is started with `expose` (WebSocket gateway), tasks triggered over WebSocket can send **progressive updates** to the client. Use `ctx.socket.update(data, progress)` inside a handler to push real-time payloads to the socket that requested the task.
 
 - **Who receives updates**: By default, only the client that emitted the task gets `task_update` / `task_retry` / `task_finished` for that task. To receive **all** task updates (e.g. for dashboards), connect with the header **`x-get-broadcast: true`**; that connection will get every `task_update`, `task_retry`, and `task_finished` for any task.
 - **Payload**: any JSON-serializable value (object, array, string, number). The client receives `{ type: 'task_update', taskId, data, progress }`.
@@ -137,17 +138,14 @@ When the TaskManager is started with `expose` (WebSocket gateway), tasks trigger
 **Handler (server):**
 
 ```ts
-await tm.registerHandler({
-  event: 'generate-report',
-  handler: async (task, ctx) => {
-    ctx.socket.update('started', 0);
-    const raw = await fetchData();
-    ctx.socket.update('fetching', 33);
-    const report = await buildReport(raw);
-    ctx.socket.update('building', 66);
-    await saveReport(report);
-    ctx.socket.update('done', 100);
-  },
+tm.on('generate-report', async (ctx) => {
+  ctx.socket.update('started', 0);
+  const raw = await fetchData();
+  ctx.socket.update('fetching', 33);
+  const report = await buildReport(raw);
+  ctx.socket.update('building', 66);
+  await saveReport(report);
+  ctx.socket.update('done', 100);
 });
 ```
 
@@ -214,7 +212,7 @@ These patterns can stress or crash a Redis container if left unbounded. Mitigate
 ## Quick init example
 
 ```ts
-import { TaskManager } from './libs/task-manager/mod.ts';
+import { Remq } from './libs/task-manager/mod.ts';
 import Redis from 'ioredis';
 
 const redisOption = {
@@ -228,7 +226,7 @@ const redisOption = {
 const db = new Redis(redisOption);
 const streamdb = new Redis({ ...redisOption, db: 2 }); // optional: separate stream connection
 
-const tm = TaskManager.init({
+const tm = Remq.create({
   db,
   streamdb,
   ctx: {},
@@ -246,21 +244,13 @@ const tm = TaskManager.init({
 });
 
 // Register handler (ctx.emit for new tasks; ctx.socket.update for real-time WS updates when expose is set — see "Real-time task updates" above)
-await tm.registerHandler({
-  handler: async (job, ctx) => {
-    console.log('Processing:', job.data);
-    ctx.emit({ event: 'follow-up', data: { from: job.name } });
-  },
-  event: 'my-event',
-  queue: 'default',
-  options: {
-    repeat: { pattern: '*/30 * * * * *' }, // every 30s
-    attempts: 3,
-  },
-});
+tm.on('my-event', async (ctx) => {
+  console.log('Processing:', ctx.data);
+  ctx.emit('follow-up', { from: ctx.name });
+}, { queue: 'default', repeat: { pattern: '*/30 * * * * *' }, attempts: 3 });
 
 // Emit job
-tm.emit({ event: 'my-event', data: { id: 1 } });
+tm.emit('my-event', { id: 1 });
 
 // Start
 await tm.start();

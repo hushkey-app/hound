@@ -5,7 +5,7 @@ Deno.test("task management guide uses TaskManager APIs", async () => {
   const content = await Deno.readTextFile(docUrl);
 
   const requiredSnippets = [
-    "TaskManager.init",
+    "Remq.create",
     "registerHandler",
     "emit",
     "delayUntil",
@@ -32,7 +32,7 @@ Deno.test("task management guide uses TaskManager APIs", async () => {
   );
 
   assert(
-    !content.includes("new TaskManager"),
+    !content.includes("new Remq"),
     "Expected task management guide to avoid constructor usage.",
   );
 });

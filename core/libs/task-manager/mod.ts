@@ -1,14 +1,16 @@
 /**
- * TaskManager - High-level API for task/job management
- * 
+ * Remq - High-level API for task/job management
+ *
  * Simple, developer-friendly API built on top of Consumer + Processor
  */
 
-export { TaskManager } from './task-manager.ts';
+export { Remq } from './remq.ts';
 export type {
   TaskManagerOptions,
   TaskHandler,
+  TaskContext,
   EmitFunction,
-  RegisterHandlerOptions,
+  EmitOptions,
+  HandlerOptions,
 } from '../../types/task-manager.ts';
 

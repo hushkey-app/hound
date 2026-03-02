@@ -4,12 +4,14 @@
  * High-level API for task/job management
  */
 
-export { TaskManager } from './libs/task-manager/mod.ts';
+export { Remq } from './libs/task-manager/mod.ts';
 export type {
   TaskManagerOptions,
   TaskHandler,
+  TaskContext,
   EmitFunction,
-  RegisterHandlerOptions,
+  EmitOptions,
+  HandlerOptions,
 } from './types/task-manager.ts';
 
 // Re-export lower-level APIs if needed

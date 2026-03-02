@@ -24,7 +24,7 @@ Add the workspace import alias to your `deno.json`:
 Then import from the workspace package:
 
 ```typescript
-import { TaskManager } from "@core/mod.ts";
+import { Remq } from "@core/mod.ts";
 ```
 
 ### Published package (JSR/npm)
@@ -40,20 +40,20 @@ deno add npm:@remq/remq
 Then import from the registry:
 
 ```typescript
-import { TaskManager } from "jsr:@remq/remq";
+import { Remq } from "jsr:@remq/remq";
 ```
 
 ## Documentation
 
 - **VitePress docs** — [`www/docs/`](www/docs/) (guides, quick start, API reference)
-- **Core libs** — [`core/libs/task-manager/README.md`](core/libs/task-manager/README.md) | [`core/libs/sdk/README.md`](core/libs/sdk/README.md) | [`core/libs/processor/README.md`](core/libs/processor/README.md) | [`core/libs/consumer/README.md`](core/libs/consumer/README.md)
+- **Core libs** — [`core/libs/task-manager/README.md`](core/libs/task-manager/README.md) (Remq) | [`core/libs/sdk/README.md`](core/libs/sdk/README.md) | [`core/libs/processor/README.md`](core/libs/processor/README.md) | [`core/libs/consumer/README.md`](core/libs/consumer/README.md)
 
 ## Up-and-running example
 
 Minimal flow based on [`examples/remq.plugin.ts`](examples/remq.plugin.ts), [`examples/scheduler/onrequest.ts`](examples/scheduler/onrequest.ts), and [`examples/index.ts`](examples/index.ts):
 
 ```typescript
-import { TaskManager } from "@core/mod.ts";
+import { Remq } from "@core/mod.ts";
 import { Redis } from "ioredis";
 
 const redisOption = {
@@ -67,7 +67,7 @@ const redisOption = {
 const db = new Redis(redisOption);
 const streamdb = new Redis({ ...redisOption, db: redisOption.db + 1 });
 
-const taskManager = TaskManager.init({
+const remq = Remq.create({
   db,
   streamdb,
   expose: 4000,
@@ -113,7 +113,7 @@ Examples in `examples/`:
 
 | File | Description |
 |------|-------------|
-| [`remq.plugin.ts`](examples/remq.plugin.ts) | TaskManager setup (db, streamdb, ctx, processor options) |
+| [`remq.plugin.ts`](examples/remq.plugin.ts) | Remq setup (db, streamdb, ctx, processor options) |
 | [`index.ts`](examples/index.ts) | Entry point — imports handlers, starts remq, emits test job |
 | [`scheduler/start.ts`](examples/scheduler/start.ts) | Scheduler flow with cron pattern |
 | [`scheduler/onrequest.ts`](examples/scheduler/onrequest.ts) | On-request handler with retries |
@@ -145,7 +145,7 @@ Set `processor.maxLogsPerTask` to cap log entries per task. Oldest logs are trim
 
 ## Real-time task updates: `ctx.socket.update` (BETA)
 
-When you start the TaskManager with `expose` (WebSocket port), tasks triggered over WebSocket can send **progressive updates** to the client. Call `ctx.socket.update(data, progress)` inside a handler to push JSON-serializable payloads to the socket in real time.
+When you start Remq with `expose` (WebSocket port), tasks triggered over WebSocket can send **progressive updates** to the client. Call `ctx.socket.update(data, progress)` inside a handler to push JSON-serializable payloads to the socket in real time.
 
 **Use cases:** long-running tasks (report generation, batch jobs), live progress (uploads, exports), multi-step workflows where the UI should show “Step 1/5 done” without polling.
 

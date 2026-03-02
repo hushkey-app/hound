@@ -16,15 +16,15 @@ inspect failed jobs, or want safe operational controls for on-call workflows.
 
 ## Connect Sdk
 
-`Sdk` should use the same Redis connection as your `TaskManager` so it sees
+`Sdk` should use the same Redis connection as your Remq instance so it sees
 consistent queue state.
 
 ```typescript
 import Redis from 'npm:ioredis';
-import { Sdk, TaskManager } from 'npm:@leotermine/tasker';
+import { Sdk, Remq } from 'npm:@leotermine/tasker';
 
 const db = new Redis({ host: '127.0.0.1', port: 6379 });
-const taskManager = TaskManager.init({ db });
+const remq = Remq.create({ db });
 const sdk = new Sdk(db);
 ```
 
@@ -74,7 +74,7 @@ await sdk.deleteTask('job_123', 'default');
 
 Notes:
 
-- `retryTask()` only updates Redis state. Re-emit the job with `TaskManager.emit()`
+- `retryTask()` only updates Redis state. Re-emit the job with `Remq.emit()`
   to actually process it.
 - `deleteTask()` removes a job before it runs; treat it as a cancel action.
 

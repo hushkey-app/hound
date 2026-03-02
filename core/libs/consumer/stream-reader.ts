@@ -3,7 +3,7 @@ import type { Message } from '../../types/message.ts';
 
 /**
  * StreamReader - Handles reading from Redis Streams
- * 
+ *
  * Copied from old worker's readQueueStream logic - robust and reliable
  */
 export class StreamReader {
@@ -12,6 +12,7 @@ export class StreamReader {
   private readonly consumerId: string;
   private readonly streamMaxLen?: number;
   private readonly readCount: number;
+  private readonly blockMs: number;
 
   constructor(
     streamdb: RedisConnection,
@@ -19,12 +20,14 @@ export class StreamReader {
     consumerId: string,
     streamMaxLen?: number,
     readCount: number = 200,
+    blockMs: number = 1000,
   ) {
     this.streamdb = streamdb;
     this.group = group;
     this.consumerId = consumerId;
     this.streamMaxLen = streamMaxLen;
     this.readCount = readCount;
+    this.blockMs = blockMs;
   }
 
   /**
@@ -32,7 +35,13 @@ export class StreamReader {
    */
   async ensureConsumerGroup(streamKey: string): Promise<void> {
     try {
-      await this.streamdb.xgroup('CREATE', streamKey, this.group, '0', 'MKSTREAM');
+      await this.streamdb.xgroup(
+        'CREATE',
+        streamKey,
+        this.group,
+        '0',
+        'MKSTREAM',
+      );
     } catch (error: unknown) {
       const err = error as { message?: string };
       if (err?.message?.includes('BUSYGROUP')) {
@@ -46,14 +55,11 @@ export class StreamReader {
   /**
    * Reads messages from stream (copied from old worker readQueueStream)
    * - Claims pending messages >30s idle
-   * - Reads new messages
+   * - Reads new messages (XREADGROUP with BLOCK blockMs)
    * - ACKs immediately after reading
    * - Returns sanitized job data
    */
-  async readQueueStream(
-    queueName: string,
-    block: number = 5000,
-  ): Promise<Message[]> {
+  async readQueueStream(queueName: string): Promise<Message[]> {
     const streamKey = `${queueName}-stream`;
     const count = this.readCount;
     // Consumer groups are ensured once at start (ensureAllConsumerGroups), not on every poll
@@ -100,7 +106,7 @@ export class StreamReader {
         'COUNT',
         count,
         'BLOCK',
-        block,
+        this.blockMs,
         'STREAMS',
         streamKey,
         '>', // Only new messages
@@ -123,7 +129,13 @@ export class StreamReader {
       // Self-clean: trim stream so it doesn't grow unbounded (prevents memory blowup)
       if (this.streamMaxLen != null && this.streamMaxLen > 0) {
         try {
-          await this.streamdb.call('XTRIM', streamKey, 'MAXLEN', '~', this.streamMaxLen);
+          await this.streamdb.call(
+            'XTRIM',
+            streamKey,
+            'MAXLEN',
+            '~',
+            this.streamMaxLen,
+          );
         } catch (trimErr) {
           console.warn('[remq] Stream XTRIM failed (non-fatal):', trimErr);
         }
@@ -183,7 +195,8 @@ export class StreamReader {
 
         // Only process unique jobs based on ID, name and queue (like old worker line 239-245)
         const msgData = msg.data as any;
-        const jobIdentifier = `${msgData.id}:${msgData.state?.name}:${msgData.state?.queue}`;
+        const jobIdentifier =
+          `${msgData.id}:${msgData.state?.name}:${msgData.state?.queue}`;
         if (processedIds.has(jobIdentifier)) {
           return false;
         }

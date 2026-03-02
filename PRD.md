@@ -96,7 +96,7 @@ to the APIs in `core/types` and `core/libs` that matter for the docs.
       `getQueuesInfo()` and their return types (`TaskStats`, `QueueInfo`).
 - [x] **5.5** Document **control methods**: `retryJob(jobId, queue)`,
       `cancelJob(jobId, queue)`, `pauseQueue(queue)`, `resumeQueue(queue)`,
-      `isQueuePaused(queue)`, `pauseJob(jobId, queue)`,
+      `isPaused(queue)`, `pauseJob(jobId, queue)`,
       `resumeJob(jobId, queue)` with behavior and errors (e.g. “only failed jobs
       can be retried”).
 - [x] **5.6** Document **admin types**: `AdminJobData` (main fields: id, state,

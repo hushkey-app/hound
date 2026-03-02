@@ -9,7 +9,7 @@ Complete API documentation for REMQ.
 
 ## Core Classes
 
-- [TaskManager](/reference/task-manager) - Manage tasks and scheduling
+- [Remq](/reference/task-manager) - Manage tasks and scheduling
 - [Consumer](/reference/consumer) - Process messages from queues
 - [Processor](/reference/processor) - Handle message processing logic
 - [Sdk](/reference/sdk) - Client SDK for queue administration and external clients

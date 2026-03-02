@@ -12,7 +12,7 @@ Deno.test("admin dashboard guide introduces Sdk workflows", async () => {
     "getTask",
     "retryTask",
     "deleteTask",
-    "TaskManager.emit",
+    "Remq.emit",
     "/reference/sdk",
     "full options and types",
   ];
@@ -27,7 +27,7 @@ Deno.test("admin dashboard guide introduces Sdk workflows", async () => {
   const forbiddenSnippets = [
     "pauseQueue",
     "resumeQueue",
-    "isQueuePaused",
+    "isPaused",
     "pauseTask",
     "resumeTask",
     "cancelTask",

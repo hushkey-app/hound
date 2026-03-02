@@ -1,18 +1,18 @@
 import { assert } from "@std/assert";
 
-Deno.test("TaskManager reference matches current API", async () => {
+Deno.test("Remq reference matches current API", async () => {
   const docUrl = new URL("../docs/reference/task-manager.md", import.meta.url);
   const content = await Deno.readTextFile(docUrl);
 
   const requiredSnippets = [
-    "TaskManager.init",
-    "registerHandler",
-    "emit",
+    "Remq.create",
+    "on(",
+    "emit(",
     "Minimal example",
     "send-welcome",
     "ctx.emit",
     "start()",
-    "delayUntil",
+    "delay",
     "retryDelayMs",
     "retryCount",
     "priority",
@@ -25,18 +25,18 @@ Deno.test("TaskManager reference matches current API", async () => {
   for (const snippet of requiredSnippets) {
     assert(
       content.includes(snippet),
-      `Expected TaskManager reference to include ${snippet}.`,
+      `Expected Remq reference to include ${snippet}.`,
     );
   }
 
   assert(
     !content.includes("schedule("),
-    "Expected TaskManager reference to remove schedule() placeholder.",
+    "Expected Remq reference to remove schedule() placeholder.",
   );
 
   assert(
-    !content.includes("new TaskManager"),
-    "Expected TaskManager reference to avoid constructor usage.",
+    !content.includes("new Remq"),
+    "Expected Remq reference to avoid constructor usage.",
   );
 
   const forbiddenSnippets = ["pauseQueue", "resumeQueue", "isQueuePaused"];
@@ -44,7 +44,7 @@ Deno.test("TaskManager reference matches current API", async () => {
   for (const snippet of forbiddenSnippets) {
     assert(
       !content.includes(snippet),
-      `Expected TaskManager reference to avoid ${snippet}.`,
+      `Expected Remq reference to avoid ${snippet}.`,
     );
   }
 });

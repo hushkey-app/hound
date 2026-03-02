@@ -5,7 +5,7 @@ Deno.test("reference index lists all core APIs", async () => {
   const content = await Deno.readTextFile(indexUrl);
 
   const requiredEntries = [
-    "TaskManager",
+    "Remq",
     "Consumer",
     "Processor",
     "Sdk",

@@ -1,40 +1,37 @@
 ---
-title: TaskManager
-description: Configure and use the TaskManager API.
+title: Remq
+description: Configure and use the Remq API.
 ---
 
-# TaskManager
+# Remq
 
-The `TaskManager` is the high-level API for defining jobs and processing them
+`Remq` is the high-level API for defining tasks and processing them
 through Redis streams. It wraps the lower-level Consumer + Processor and exposes
-simple handler registration and job emission.
+simple handler registration and task emission.
 
 ## Minimal example
 
 ```typescript
-const taskManager = TaskManager.init({ db });
+import { Remq } from 'npm:@leotermine/tasker';
 
-await taskManager.registerHandler({
-  event: 'send-welcome',
-  handler: async (job) => {
-    console.log('Sending welcome email for', job.data?.userId);
-  },
-});
+const remq = Remq.create({ db });
 
-await taskManager.emit({
-  event: 'send-welcome',
-  data: { userId: 'user_123' },
-});
+remq
+  .on('send-welcome', async (ctx) => {
+    console.log('Sending welcome email for', ctx.data?.userId);
+  });
+
+remq.emit('send-welcome', { userId: 'user_123' });
 ```
 
 ## Initialization
 
-### `TaskManager.init(options)`
+### `Remq.create(options)`
 
-Create or retrieve the singleton TaskManager instance.
+Create or retrieve the singleton Remq instance.
 
 ```typescript
-const taskManager = TaskManager.init({
+const remq = Remq.create({
   db,
   streamdb,
   ctx: { logger },
@@ -56,84 +53,45 @@ const taskManager = TaskManager.init({
 
 ## Handler registration
 
-### `registerHandler(options)`
+### `on(event, handler, options?)`
 
-Register a handler for an event name and optional queue.
+Register a handler for an event name and optional queue. Returns `this` for chaining. Event names support dot notation (e.g. `'host.sync'`, `'user.welcome'`).
 
 ```typescript
-await taskManager.registerHandler({
-  event: 'send-email',
+remq
+  .on('send-email', async (ctx) => {
+    await ctx.emit('track-email', { id: ctx.data?.id });
+  }, { queue: 'emails', repeat: { pattern: '0 0 * * *' }, attempts: 3, debounce: 60000 });
+```
+
+**HandlerOptions:** `queue?`, `repeat?`, `attempts?`, `debounce?`
+
+- Handlers receive a single `ctx: TaskContext<TApp, TData>` (job identity, data, logger, emit, socket, plus app context).
+
+## Emitting tasks
+
+### `emit(event, data?, options?)`
+
+Trigger a task on a queue. Returns the task id.
+
+```typescript
+remq.emit('send-email', { id: '123' }, {
   queue: 'emails',
-  handler: async (job, ctx) => {
-    await ctx.emit({
-      event: 'track-email',
-      data: { id: job.data?.id },
-    });
-  },
-  options: {
-    repeat: { pattern: '0 0 * * *' },
-    attempts: 3,
-    debounce: 60000,
-  },
+  delay: new Date(Date.now() + 60_000),
+  retryCount: 2,
 });
 ```
 
-**Options:** `RegisterHandlerOptions<T, D>`
-
-- `handler`: Function invoked for matching jobs.
-- `event`: Event/job name.
-- `queue`: Queue name (defaults to `default`).
-- `options.repeat.pattern`: Cron expression for repeatable jobs.
-- `options.attempts`: Maximum retry attempts for the job.
-- `options.debounce`: Debounce window in milliseconds for this handler.
-
-## Emitting jobs
-
-### `emit(args)`
-
-Trigger a job on a queue.
-
-```typescript
-taskManager.emit({
-  event: 'send-email',
-  queue: 'emails',
-  data: { id: '123' },
-  options: {
-    delayUntil: new Date(Date.now() + 60_000),
-    retryCount: 2,
-  },
-});
-```
-
-**Args:**
-
-- `event`: Event/job name (required).
-- `queue`: Queue name (defaults to `default`).
-- `data`: Job payload (defaults to `{}`).
-- `options`: Job options and metadata.
-  - `id`: Custom job id (defaults to a hash of `event` + `data`).
-  - `priority`: Higher numbers are processed first (default `0`).
-  - `delayUntil`: Date when the job becomes eligible (e.g. `new Date(Date.now() + 60_000)`).
-  - `retryCount`: Initial retry budget for the job.
-  - `retryDelayMs`: Delay between retries in milliseconds (default `1000`).
-  - `repeat`: Repeat configuration for cron-like jobs (`{ pattern: "0 * * * *" }`).
-  - `attempts`: Shorthand for `retryCount` when emitting.
-  - `debounce`: Debounce window in milliseconds for this job id.
+**EmitOptions:** `queue?` (default `'default'`), `id?`, `priority?`, `delay?` (Date), `retryCount?`, `retryDelayMs?`, `repeat?`, `attempts?`.
 
 ### `emit` via context
 
 Handlers receive a context object that includes your custom `ctx` plus an
-`emit` function. Use it to enqueue follow-up jobs while processing.
+`emit` function. Use it to enqueue follow-up tasks while processing.
 
 ```typescript
-taskManager.registerHandler({
-  event: 'resize-image',
-  handler: async (job, ctx) => {
-    await ctx.emit({
-      event: 'notify-user',
-      data: { userId: job.data?.userId },
-    });
-  },
+remq.on('resize-image', async (ctx) => {
+  await ctx.emit('notify-user', { userId: ctx.data?.userId });
 });
 ```
 
@@ -144,24 +102,28 @@ taskManager.registerHandler({
 Starts processing jobs for all registered handlers. This call is idempotent.
 
 ```typescript
-await taskManager.start();
+await remq.start();
 ```
 
 ### `stop()`
 
-Stops processing and waits for active tasks to finish.
+Stops processing and waits for active tasks to finish (via `drain()`).
 
 ```typescript
-await taskManager.stop();
+await remq.stop();
 ```
 
 **Lifecycle notes:**
 
-- Call `registerHandler()` before `start()` so queues are wired up.
-- To add new handlers at runtime, stop the manager, register handlers, and
+- Call `on()` before `start()` so queues are wired up.
+- To add new handlers at runtime, stop the instance, register handlers, and
   start again.
 
 ## Queue controls
+
+- `pause(queue?)` / `resume(queue?)` — Pause or resume one or all queues.
+- `isPaused(queue)` — Check if a queue is paused.
+- `drain()` — Wait for all active tasks to finish.
 
 ## Next Steps
 

@@ -13,7 +13,7 @@ an async handler for each message.
 
 Choose `Consumer` for low-level, stream-first workflows (custom backoffs,
 alternative storage, or integrating with existing stream producers). If you
-want managed jobs, retries, and scheduling, start with `TaskManager` and its
+want managed jobs, retries, and scheduling, start with Remq and its
 `Processor` instead.
 
 ## Create a Consumer

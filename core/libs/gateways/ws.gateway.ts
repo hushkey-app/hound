@@ -3,14 +3,14 @@
  * Uses Deno's built-in Deno.serve and Deno.upgradeWebSocket.
  */
 
-import { TaskManager } from '../task-manager/mod.ts';
+import type { Remq } from '../task-manager/mod.ts';
 
 export type WsConnectionHandler = (ws: WebSocket, req: Request) => void;
 
 export type WsGatewayOptions = {
   port: number;
   hostname?: string;
-  taskManager: TaskManager<any>;
+  remq: Remq<any>;
   onConnection?: WsConnectionHandler;
 };
 

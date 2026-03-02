@@ -1,9 +1,9 @@
-# TaskManager Example Usage
+# Remq Example Usage
 
 ## Simple Setup (similar to original plugin.ts)
 
 ```typescript
-import { TaskManager } from './mod.ts';
+import { Remq } from './mod.ts';
 import { Redis } from 'ioredis';
 
 // Create Redis connection
@@ -16,8 +16,8 @@ const db = new Redis({
 // Define context for your app
 const contextApp = {};
 
-// Initialize TaskManager (simple API)
-const taskManager = TaskManager.init({
+// Initialize Remq (simple API)
+const taskManager = Remq.create({
   db,
   ctx: contextApp,
   concurrency: 4,
@@ -30,25 +30,18 @@ const taskManager = TaskManager.init({
   },
 });
 
-// Register handler (delegates code)
-taskManager.registerHandler({
-  handler: async (job, ctx) => {
-    console.log('Processing:', job.name, job.data);
-    await job.logger?.('Job started');
-    
-    // Your business logic here
-    // ...
-    
-    // Emit child jobs if needed
-    ctx.emit({
-      event: 'child-job',
-      data: { parentId: job.data.id },
-    });
-    
-    await job.logger?.('Job completed');
-  },
-  event: 'my-event',
-  queue: 'default',
+// Register handler (sync, fluent)
+taskManager.on('my-event', async (ctx) => {
+  console.log('Processing:', ctx.name, ctx.data);
+  await ctx.logger('Job started');
+
+  // Your business logic here
+  // ...
+
+  // Emit child jobs if needed
+  ctx.emit('child-job', { parentId: ctx.data.id });
+
+  await ctx.logger('Job completed');
 });
 
 // Start processing
@@ -61,80 +54,53 @@ export { taskManager };
 
 ```typescript
 // Register a cron job (runs every 5 minutes)
-taskManager.registerHandler({
-  handler: async (job, ctx) => {
-    console.log('Cron job running:', new Date());
-  },
-  event: 'periodic-task',
-  queue: 'scheduler',
-  options: {
-    repeat: {
-      pattern: '*/5 * * * *', // Every 5 minutes
-    },
-  },
-});
+taskManager.on('periodic-task', async (ctx) => {
+  console.log('Cron job running:', new Date());
+}, { queue: 'scheduler', repeat: { pattern: '*/5 * * * *' } });
 ```
 
 ## Emit Jobs (Execution)
 
 ```typescript
-// Emit a simple job
-taskManager.emit({
-  event: 'process-user',
-  data: { userId: '123' },
-});
+// Emit a simple job (queue defaults to 'default')
+taskManager.emit('process-user', { userId: '123' });
 
-// Emit with retry options
-taskManager.emit({
-  event: 'send-email',
+// Emit with options
+taskManager.emit('send-email', { to: 'user@example.com', subject: 'Hello' }, {
   queue: 'emails',
-  data: { to: 'user@example.com', subject: 'Hello' },
-  options: {
-    retryCount: 3,
-    delayUntil: new Date(Date.now() + 60000), // Delay 1 minute
-  },
+  retryCount: 3,
+  delay: new Date(Date.now() + 60000), // Delay 1 minute
 });
 ```
 
 ## Complete Example
 
 ```typescript
-import { TaskManager } from '@core/mod.ts';
+import { Remq } from '@core/mod.ts';
 import { Redis } from 'ioredis';
 
 const db = new Redis({ port: 6379, host: 'localhost', db: 1 });
 
-const taskManager = TaskManager.init({
+const taskManager = Remq.create({
   db,
   ctx: {},
   concurrency: 4,
 });
 
-// Register handler
-taskManager.registerHandler({
-  handler: async (job, ctx) => {
-    console.log(`Processing ${job.name} with data:`, job.data);
-    await job.logger?.('Started processing');
-    
-    // Do work
-    // ...
-    
-    // Emit follow-up job
-    ctx.emit({
-      event: 'follow-up',
-      data: { originalJob: job.name },
-    });
-  },
-  event: 'main-job',
-  queue: 'default',
-});
+// Register handler (fluent)
+taskManager.on('main-job', async (ctx) => {
+  console.log(`Processing ${ctx.name} with data:`, ctx.data);
+  await ctx.logger('Started processing');
+
+  // Do work
+  // ...
+
+  ctx.emit('follow-up', { originalJob: ctx.name });
+}, { queue: 'default' });
 
 // Start
 await taskManager.start();
 
 // Emit jobs
-taskManager.emit({
-  event: 'main-job',
-  data: { taskId: '123' },
-});
+taskManager.emit('main-job', { taskId: '123' });
 ```

@@ -19,7 +19,7 @@ deno add npm:@leotermine/tasker
 Or import directly:
 
 ```typescript
-import { TaskManager } from 'npm:@leotermine/tasker';
+import { Remq } from 'npm:@leotermine/tasker';
 ```
 
 ## Setup Redis

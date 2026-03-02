@@ -11,7 +11,7 @@ metadata, and then processed asynchronously by consumers or processors.
 
 ## Core building blocks
 
-- **Producer**: emits jobs via `TaskManager.emit()` or `ctx.emit()`.
+- **Producer**: emits jobs via `Remq.emit()` or `ctx.emit()`.
 - **Queue**: a named channel that groups jobs (default: `default`).
 - **Stream**: Redis Streams are the underlying transport for each queue.
 - **Consumer**: reads stream entries and invokes a handler.
@@ -20,7 +20,7 @@ metadata, and then processed asynchronously by consumers or processors.
 
 ## Message flow
 
-1. **Emit**: `TaskManager.emit()` writes a job to a queue with payload + options.
+1. **Emit**: `Remq.emit()` writes a job to a queue with payload + options.
 2. **Store**: job metadata (priority, delay, retry budget) is persisted in Redis.
 3. **Consume**: Consumers read from the queue stream and hand off to handlers.
 4. **Handle**: Processor applies retries/delay/DLQ rules when handlers fail.
@@ -39,15 +39,15 @@ controls how the Processor handles delivery:
 - `debounce`: deduplicate jobs within a time window.
 
 For full options and types, see the
-[TaskManager API Reference](/reference/task-manager) and
+[Remq API Reference](/reference/task-manager) and
 [Processor API Reference](/reference/processor).
 
 ## Example: emit and process a queued job
 
 ```typescript
-import { TaskManager } from '@leotermine/tasker';
+import { Remq } from '@leotermine/tasker';
 
-const taskManager = TaskManager.init({ db });
+const remq = Remq.create({ db });
 
 await taskManager.registerHandler({
   event: 'send-email',
@@ -71,7 +71,7 @@ await taskManager.emit({
 
 ## When to use each API
 
-- Use `TaskManager` for most app workflows (handlers, retries, and queue
+- Use Remq for most app workflows (handlers, retries, and queue
   management).
 - Use `Consumer` directly when you need raw stream access without policy logic.
 - Use `Processor` when you want retries, DLQ routing, or debouncing with a
@@ -80,5 +80,5 @@ await taskManager.emit({
 ## Next Steps
 
 - Learn about [Consumers](/guide/consumers)
-- Explore [TaskManager](/reference/task-manager)
+- Explore [Remq](/reference/task-manager)
 - Review [Processor](/reference/processor)

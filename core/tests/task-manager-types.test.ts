@@ -1,12 +1,12 @@
-import { TaskManager } from '../mod.ts';
+import { Remq } from '../mod.ts';
 import type { RedisConnection } from '../types/redis-client.ts';
 
-Deno.test('TaskManager applies documented defaults and registerHandler queue default', async () => {
-  const TaskManagerAny = TaskManager as unknown as { instance?: unknown };
-  TaskManagerAny.instance = undefined;
+Deno.test('Remq applies documented defaults and on() queue default', () => {
+  const RemqAny = Remq as unknown as { instance?: unknown };
+  RemqAny.instance = undefined;
 
   const fakeRedis = {} as unknown as RedisConnection;
-  const manager = TaskManager.init({ db: fakeRedis });
+  const manager = Remq.create({ db: fakeRedis });
   const internal = manager as unknown as {
     concurrency: number;
     streamdb: unknown;
@@ -32,10 +32,7 @@ Deno.test('TaskManager applies documented defaults and registerHandler queue def
     throw new Error('Expected processorOptions to default to {}');
   }
 
-  await manager.registerHandler({
-    event: 'default-queue-check',
-    handler: () => {},
-  });
+  manager.on('default-queue-check', () => {});
 
   if (!internal.queueStreams.has('default-stream')) {
     throw new Error('Expected default queue stream to be registered');
@@ -45,5 +42,5 @@ Deno.test('TaskManager applies documented defaults and registerHandler queue def
     throw new Error('Expected default queue handler key to be registered');
   }
 
-  TaskManagerAny.instance = undefined;
+  RemqAny.instance = undefined;
 });

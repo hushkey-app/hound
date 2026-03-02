@@ -295,25 +295,29 @@ export class Sdk {
   }
 
   /**
-   * Pause a queue (stops processing new tasks from this queue)
+   * Pause one or all queues. With no arg, pauses all discovered queues.
    */
-  async pauseQueue(queue: string): Promise<void> {
-    const pausedKey = `queues:${queue}:paused`;
-    await this.db.set(pausedKey, 'true');
+  async pause(queue?: string): Promise<void> {
+    const queues = queue != null ? [queue] : await this.getQueues();
+    for (const q of queues) {
+      await this.db.set(`queues:${q}:paused`, 'true');
+    }
   }
 
   /**
-   * Resume a queue (resumes processing tasks from this queue)
+   * Resume one or all queues. With no arg, resumes all discovered queues.
    */
-  async resumeQueue(queue: string): Promise<void> {
-    const pausedKey = `queues:${queue}:paused`;
-    await this.db.del(pausedKey);
+  async resume(queue?: string): Promise<void> {
+    const queues = queue != null ? [queue] : await this.getQueues();
+    for (const q of queues) {
+      await this.db.del(`queues:${q}:paused`);
+    }
   }
 
   /**
-   * Check if a queue is paused
+   * Check if a queue is paused.
    */
-  async isQueuePaused(queue: string): Promise<boolean> {
+  async isPaused(queue: string): Promise<boolean> {
     const pausedKey = `queues:${queue}:paused`;
     const isPaused = await this.db.get(pausedKey);
     return isPaused === 'true';

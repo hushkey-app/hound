@@ -7,8 +7,8 @@ Deno.test("Quick Start guide uses TaskManager.init and npm imports", async () =>
   const requiredSnippets = [
     "deno add npm:@leotermine/tasker npm:ioredis",
     "import Redis from 'npm:ioredis';",
-    "import { TaskManager } from 'npm:@leotermine/tasker';",
-    "TaskManager.init",
+    "import { Remq } from 'npm:@leotermine/tasker';",
+    "Remq.create",
     "registerHandler",
     "emit",
     "Job queued!",
@@ -28,7 +28,7 @@ Deno.test("Quick Start guide uses TaskManager.init and npm imports", async () =>
   );
 
   assert(
-    !content.includes("new TaskManager"),
+    !content.includes("new Remq"),
     "Expected quick start to avoid constructor usage.",
   );
 });
