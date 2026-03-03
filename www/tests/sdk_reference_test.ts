@@ -1,38 +1,38 @@
-import { assert } from "@std/assert";
+import { assert } from '@std/assert';
 
-Deno.test("Sdk reference matches current API", async () => {
-  const docUrl = new URL("../docs/reference/sdk.md", import.meta.url);
+Deno.test('RemqAdmin reference matches current API', async () => {
+  const docUrl = new URL('../docs/reference/sdk.md', import.meta.url);
   const content = await Deno.readTextFile(docUrl);
 
   const requiredSnippets = [
-    "Sdk",
-    "management",
-    "CRUD and control",
-    "new Sdk(db: RedisConnection)",
-    "const queues = await sdk.getQueuesInfo()",
-    "const failedTasks = await sdk.listTasks({",
-    "await sdk.retryTask",
-    "AdminJobData",
-    "## Types",
-    "ListJobsOptions",
-    "queue is required",
-    "TaskStats",
-    "QueueInfo",
-    "getTask(taskId: string, queue: string): Promise<AdminJobData | null>",
-    "listTasks(options?: ListJobsOptions): Promise<AdminJobData[]>",
-    "deleteTask(taskId: string, queue: string): Promise<void>",
-    "getQueueStats(queue: string): Promise<TaskStats>",
-    "getQueues(): Promise<string[]>",
-    "getQueuesInfo(): Promise<QueueInfo[]>",
-    "retryTask",
-    "Remq.emit()",
-    "only failed jobs can be retried",
+    'RemqAdmin',
+    'management',
+    'CRUD and control',
+    'new RemqAdmin(db:',
+    'const queues = await admin.queuesInfo()',
+    'const failedJobs = await admin.listJobs({',
+    'await admin.retryJob',
+    'Job',
+    '## Types',
+    'ListOptions',
+    'required and missing it throws',
+    'QueueStats',
+    'QueueInfo',
+    'getJob(jobId: string, queue: string): Promise<Job | null>',
+    'listJobs(options?: ListOptions): Promise<Job[]>',
+    'deleteJob(jobId: string, queue: string): Promise<void>',
+    'stats(queue: string): Promise<QueueStats>',
+    'queues(): Promise<string[]>',
+    'queuesInfo(): Promise<QueueInfo[]>',
+    'retryJob',
+    'remq.emit()',
+    'job status is not',
   ];
 
   for (const snippet of requiredSnippets) {
     assert(
       content.includes(snippet),
-      `Expected Sdk reference to include ${snippet}.`,
+      `Expected RemqAdmin reference to include ${snippet}.`,
     );
   }
 });

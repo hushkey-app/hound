@@ -4,12 +4,12 @@
  */
 export function genJobIdSync(name: string, data: unknown): string {
   const dataString = JSON.stringify(data);
-  
+
   // Use same approach as old genJobId - create SHA256 hash (deterministic)
   // For cron jobs with empty data, this ensures same ID every time
   const encoder = new TextEncoder();
   const dataBytes = encoder.encode(dataString);
-  
+
   // Simple hash function (deterministic, like old genJobId)
   // Old system uses crypto.createHash('sha256'), but we need sync version
   // Use same hash algorithm as old system for consistency
@@ -19,11 +19,10 @@ export function genJobIdSync(name: string, data: unknown): string {
     hash = ((hash << 5) - hash) + char;
     hash = hash & hash; // Convert to 32bit integer
   }
-  
+
   // Convert to hex (like old system uses .digest('hex'))
   const hashHex = Math.abs(hash).toString(16);
-  
+
   // Same format as old genJobId: ${name}:${hash}
   return `${name}:${hashHex}`;
 }
-

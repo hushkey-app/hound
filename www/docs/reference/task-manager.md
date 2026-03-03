@@ -61,12 +61,17 @@ Register a handler for an event name and optional queue. Returns `this` for chai
 remq
   .on('send-email', async (ctx) => {
     await ctx.emit('track-email', { id: ctx.data?.id });
-  }, { queue: 'emails', repeat: { pattern: '0 0 * * *' }, attempts: 3, debounce: 60000 });
+  }, {
+    queue: 'emails',
+    repeat: { pattern: '0 0 * * *' },
+    attempts: 3,
+    debounce: 60000,
+  });
 ```
 
 **HandlerOptions:** `queue?`, `repeat?`, `attempts?`, `debounce?`
 
-- Handlers receive a single `ctx: TaskContext<TApp, TData>` (job identity, data, logger, emit, socket, plus app context).
+- Handlers receive a single `ctx: JobContext<TApp, TData>` (job identity, data, logger, emit, socket, plus app context).
 
 ## Emitting tasks
 
@@ -121,12 +126,11 @@ await remq.stop();
 
 ## Queue controls
 
-- `pause(queue?)` / `resume(queue?)` — Pause or resume one or all queues.
-- `isPaused(queue)` — Check if a queue is paused.
-- `drain()` — Wait for all active tasks to finish.
+- **Remq:** `drain()` — Wait for all active tasks to finish.
+- **RemqAdmin:** Use `new RemqAdmin(db, remq)` then `admin.pause(queue?)`, `admin.resume(queue?)`, `admin.isPaused(queue)` for queue pause/resume and state.
 
 ## Next Steps
 
 - [Consumer API](/reference/consumer)
 - [Processor API](/reference/processor)
-- [Sdk API](/reference/sdk)
+- [RemqAdmin API](/reference/sdk)

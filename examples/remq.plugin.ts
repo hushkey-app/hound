@@ -1,4 +1,5 @@
-import { Remq } from '@core/libs/task-manager/mod.ts';
+import { Remq } from '@core/libs/remq/mod.ts';
+import { RemqAdmin } from '@core/libs/remq-admin/mod.ts';
 import { Redis } from 'ioredis';
 
 // Create Redis Option
@@ -33,7 +34,7 @@ const contextApp = {
 const remq = Remq.create({
   db,
   streamdb, // Optional: separate connection for streams
-  ctx: contextApp as { foo: string },
+  ctx: contextApp,
   expose: 4000, // WebSocket port; clients can send header x-get-broadcast: true to receive all task updates
   concurrency: 10, // the number of messages to process concurrently uses workers steal process strategy
   debug: false, // log PID, worker_id (slot 0..concurrency-1), job_id (e.g. [remq] PID 12345 worker_id 2 job_id on-request-1)
@@ -45,11 +46,13 @@ const remq = Remq.create({
       count: 200, // max messages per batch (default 200)
     },
     pollIntervalMs: 1000, // let work accumulate between reads; then read + process with concurrency (default 3000)
-    maxLogsPerTask: 100, // trim oldest logs; keeps Redis self-cleaning
+    maxLogsPerJob: 100, // trim oldest logs; keeps Redis self-cleaning
     streamMaxLen: 3000, // cap stream at add time + trim after read. Monitor: XLEN/MEMORY USAGE per stream if payloads are large
     jobStateTtlSeconds: 604800, // 7 days; job state keys expire. Admin/SDK queries must handle missing keys (SCAN/GET)
     // readCount: 50, // optional: lower if message payloads are large (default 200)
   },
 });
 
-export { remq };
+const admin = new RemqAdmin(db, remq);
+
+export { admin, remq };

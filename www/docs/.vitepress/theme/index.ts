@@ -5,4 +5,3 @@ import './custom.css';
 export default {
   extends: DefaultTheme,
 } satisfies Theme;
-

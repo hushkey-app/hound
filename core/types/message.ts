@@ -48,4 +48,3 @@ export interface ConsumerEvents {
   failed: CustomEvent<{ message: Message; error: Error; duration: number }>;
   error: CustomEvent<{ error: Error }>;
 }
-

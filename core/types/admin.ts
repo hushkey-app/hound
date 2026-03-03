@@ -1,52 +1,44 @@
 /**
- * Job data structure for admin API
+ * admin.ts — types for RemqAdmin and dashboard queries
  */
-export interface AdminJobData {
+
+export interface Job {
   id: string;
+  status: 'waiting' | 'processing' | 'completed' | 'failed' | 'delayed';
+  paused?: boolean;
+
+  // Job identity
   state: {
     name: string;
     queue: string;
-    data?: unknown;
-    options?: {
-      repeat?: {
-        pattern: string;
-      };
-      [key: string]: unknown;
-    };
+    data: unknown;
+    options?: Record<string, unknown>;
   };
-  status: 'waiting' | 'processing' | 'completed' | 'failed' | 'delayed';
+
+  // Timing
+  timestamp: number;
   delayUntil: number;
   lockUntil: number;
-  priority: number;
+  lastRun?: number;
+
+  // Retry
   retryCount: number;
   retryDelayMs: number;
   retriedAttempts: number;
+
+  // Cron
   repeatCount: number;
   repeatDelayMs: number;
-  logs: Array<{
-    message: string;
-    timestamp: number;
-  }>;
-  errors: string[];
-  timestamp: number;
-  lastRun?: number;
-  paused?: boolean;
+
+  // Observability
+  logs: { message: string; timestamp: number }[];
+  errors: { message: string; stack?: string; timestamp: number }[];
+
+  // Misc
+  priority: number;
 }
 
-/**
- * Options for listing jobs
- */
-export interface ListJobsOptions {
-  queue?: string;
-  status?: 'waiting' | 'processing' | 'completed' | 'failed' | 'delayed';
-  limit?: number;
-  offset?: number;
-}
-
-/**
- * Task statistics per queue
- */
-export interface TaskStats {
+export interface QueueStats {
   queue: string;
   waiting: number;
   processing: number;
@@ -56,10 +48,14 @@ export interface TaskStats {
   total: number;
 }
 
-/**
- * Queue information
- */
 export interface QueueInfo {
   name: string;
-  stats: TaskStats;
+  stats: QueueStats;
+}
+
+export interface ListOptions {
+  queue?: string;
+  status?: Job['status'];
+  limit?: number;
+  offset?: number;
 }

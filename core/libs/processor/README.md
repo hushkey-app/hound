@@ -5,16 +5,19 @@ Policy layer that wraps Consumer to add retries, delays, DLQ routing, and deboun
 ## Features
 
 ### 1. Retries
+
 - Configurable max retries
 - Exponential backoff support
 - Custom retry logic (shouldRetry function)
 - Configurable retry delays
 
 ### 2. Delays
+
 - Automatically re-queues messages with `delayUntil` in the future
 - Respects `delayUntil` timestamp from message data
 
 ### 3. DLQ (Dead Letter Queue)
+
 - Routes failed messages to DLQ after retries exhausted
 - Configurable DLQ stream key
 - Custom DLQ routing logic
@@ -22,6 +25,7 @@ Policy layer that wraps Consumer to add retries, delays, DLQ routing, and deboun
   - `shouldSendToDLQ` defaults to sending on the final failure (when retries are exhausted)
 
 ### 4. Debouncing (Optional) ⭐
+
 - **Optional feature** - prevents duplicate message processing within a time window
 - Configurable debounce window (in seconds) - set any value you need
 - Custom key function for debounce tracking
@@ -191,6 +195,7 @@ const processor = new Processor({
 ```
 
 **Defaults:**
+
 - If `dlq.streamKey` is not set, DLQ routing is disabled.
 - If `dlq.shouldSendToDLQ` is not set, the processor sends to DLQ when retries are exhausted.
 
@@ -203,32 +208,32 @@ const processor = new Processor({
     streamdb: redisClient,
     handler: async (message, ctx) => {
       const data = message.data as { userId: string; action: string };
-      
+
       // Process the message
       await performAction(data.userId, data.action);
-      
+
       await ctx.ack();
     },
     concurrency: 10,
     group: 'processor',
   },
   streamdb: redisClient,
-  
+
   // Retry configuration
   retry: {
     maxRetries: 3,
     retryDelayMs: 1000,
     backoffMultiplier: 2, // 1s, 2s, 4s
   },
-  
+
   // DLQ configuration
   dlq: {
     streamKey: 'my-queue-dlq',
   },
-  
+
   // Optional debounce configuration (simple API)
   debounce: 300, // Debounce window in seconds (configure any value you need)
-  
+
   // Or use advanced API for custom key function:
   // debounce: {
   //   debounce: 300,
@@ -237,7 +242,7 @@ const processor = new Processor({
   //     return `user:${data.userId || message.id}`;
   //   },
   // },
-  
+
   // Don't retry configuration errors
   ignoreConfigErrors: true,
 });
@@ -247,7 +252,7 @@ await processor.start({ signal: abortSignal });
 
 // Stop processing
 processor.stop();
-await processor.waitForActiveTasks();
+await processor.waitForActiveJobs();
 ```
 
 ## Message Data Structure
@@ -315,6 +320,7 @@ To disable this behavior, set `ignoreConfigErrors: false`.
 ## Integration with Consumer
 
 Processor wraps Consumer and delegates all runtime concerns to it:
+
 - Consumer handles: fetching, concurrency, ACK timing, events
 - Processor handles: retries, delays, DLQ, debouncing
 

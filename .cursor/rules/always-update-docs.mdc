@@ -10,9 +10,9 @@ When you change code that affects behavior, API, or configuration, **update the 
 ## What to update
 
 - **Public API** (Remq, emit, handlers, options) → `README.md`, `core/README.md`, and `www/docs/` (reference + guides).
-- **Core libs** (Remq in task-manager/, processor, consumer, sdk) → the lib’s `README.md` and/or `EXAMPLE.md` under `core/libs/*/`.
+- **Core libs** (Remq in task-manager/, processor, consumer, RemqAdmin in sdk/) → the lib’s `README.md` and/or `EXAMPLE.md` under `core/libs/*/`.
 - **New or renamed options** (processor, retry, DLQ, expose, etc.) → document in `core/README.md` and any `www/docs` reference that covers that area.
-- **Examples** → keep `examples/` in sync with the current API (e.g. `onTaskFinished`, `ctx.socket.update`).
+- **Examples** → keep `examples/` in sync with the current API (e.g. `onJobFinished`, `ctx.socket.update`).
 
 ## Checklist
 

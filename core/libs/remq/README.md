@@ -1,6 +1,6 @@
 # Remq
 
-High-level API for task/job management. Simple, developer-friendly interface built on top of Consumer + Processor.
+High-level API for job management. Simple, developer-friendly interface built on top of Consumer + Processor.
 
 ## Features
 
@@ -99,7 +99,7 @@ const taskManager = Remq.create<AppContext>({
 });
 
 taskManager.on('process-user', async (ctx) => {
-  // ctx = TaskContext<AppContext> — job identity + data + app context
+  // ctx = JobContext<AppContext> — job identity + data + app context
   const user = await ctx.db.getUser(ctx.data.userId);
   await ctx.cache.set(`user:${user.id}`, user);
 
@@ -114,33 +114,69 @@ taskManager.on('process-user', async (ctx) => {
 Create or retrieve the singleton Remq instance.
 
 **Options:**
+
 - `db: RedisConnection` - Redis connection for job storage
 - `ctx?: T` - Context object passed to handlers
 - `concurrency?: number` - Number of concurrent jobs (default: 1)
 - `streamdb?: RedisConnection` - Optional separate Redis connection for streams
 - `processor?: { retry?, dlq?, debounce?, ignoreConfigErrors? }` - Processor options
 
-### `on(event, handler, options?)`
+### `on(eventOrDefinition, handler?, options?)`
 
-Register a handler for an event/task. Sync, returns `this` for chaining. Event names support dot notation (e.g. `'host.sync'`, `'user.welcome'`).
+Register a handler for an event/job. Sync, returns `this` for chaining. Event names support dot notation (e.g. `'host.sync'`, `'user.welcome'`).
+
+**Signatures:**
+
+- `on(event, handler, options?)` — event name, handler function, optional options
+- `on(definition)` — pass a `JobDefinition` from `defineJob()` (handler and options come from the definition)
 
 **Parameters:**
-- `event: string` - Event/task name
-- `handler: TaskHandler<TApp, D>` - Handler function receiving single `ctx: TaskContext<TApp, D>`
+
+- `eventOrDefinition: string | JobDefinition<TApp, D>` - Event/job name or a job definition from `defineJob()`
+- `handler?: JobHandler<TApp, D>` - Handler function (required when first arg is string)
 - `options?: HandlerOptions` - `{ queue?, repeat?, attempts?, debounce? }`
 
 **Handler signature:**
+
 ```typescript
-(ctx: TaskContext<TApp, TData>) => Promise<void> | void
+(ctx: JobContext<TApp, TData>) => Promise<void> | void
 ```
 
-`TaskContext` includes: `id`, `name`, `queue`, `status`, `retryCount`, `retriedAttempts`, `data`, `logger`, `emit`, `socket`, plus app context (TApp) merged onto `ctx`.
+`JobContext` includes: `id`, `name`, `queue`, `status`, `retryCount`, `retriedAttempts`, `data`, `logger`, `emit`, `socket`, plus app context (TApp) merged onto `ctx`.
+
+### `defineJob(event, handler, options?)`
+
+Typed factory for job definitions. Zero runtime overhead. Use with `remq.on(jobDefinition)` for a clean file-per-job pattern and full `TData` inference in the handler.
+
+```typescript
+// jobs/user.welcome.ts
+import { defineJob } from '@remq/core'
+
+export default defineJob('user.welcome', async (ctx) => {
+  await ctx.mailer.send(ctx.data.email)
+}, { queue: 'emails', attempts: 3 })
+
+// index.ts
+import userWelcome from './jobs/user.welcome.ts'
+remq.on(userWelcome).start()
+```
+
+With typed data:
+
+```typescript
+interface HostSyncData { hostId: string; region: 'jp' | 'au' }
+defineJob<AppCtx, HostSyncData>('host.sync', async (ctx) => {
+  // ctx.data.hostId, ctx.data.region are typed
+  await ctx.services.hosts.sync(ctx.data.hostId, ctx.data.region)
+}, { queue: 'sync', repeat: { pattern: '0 * * * *' } })
+```
 
 ### `emit(event, data?, options?)`
 
-Emit/trigger a task/event. Returns job id.
+Emit/trigger a job/event. Returns job id.
 
 **Parameters:**
+
 - `event: string` - Event name
 - `data?: unknown` - Payload (default `{}`)
 - `options?: EmitOptions` - `queue` (default `'default'`), `id?`, `priority?`, `delay?`, `retryCount?`, `retryDelayMs?`, `repeat?`, `attempts?`
@@ -167,13 +203,7 @@ Stop processing jobs. Waits for active tasks to complete (via `drain()`).
 
 Wait for all active tasks to finish. Use before shutdown or when reconfiguring.
 
-### `pause(queue?)` / `resume(queue?)`
-
-Pause or resume queue(s). With no argument, pauses or resumes all registered queues; with a queue name, only that queue.
-
-### `isPaused(queue)`
-
-Returns whether the given queue is paused.
+**Queue control and job-finished:** Use `RemqAdmin` for `pause(queue?)`, `resume(queue?)`, `isPaused(queue)`, and `onJobFinished(cb)` — construct with `new RemqAdmin(db, remq)` to enable `onJobFinished`.
 
 ### `getContext()`
 
@@ -181,15 +211,20 @@ Get the context object (useful for accessing emit function outside handlers).
 
 ## Types
 
-### `TaskHandler<T, D>`
+### `JobHandler<T, D>`
 
 Handler function invoked for each job.
 
-**TaskContext fields:** `id`, `name`, `queue`, `status`, `retryCount`, `retriedAttempts`, `data`, `logger`, `emit`, `socket`, plus app context (TApp) merged onto `ctx`.
+**JobContext fields:** `id`, `name`, `queue`, `status`, `retryCount`, `retriedAttempts`, `data`, `logger`, `emit`, `socket`, plus app context (TApp) merged onto `ctx`.
 
 **Where used:**
-- Passed to `on(event, handler, options?)` and stored per `queue:event`
+
+- Passed to `on(event, handler, options?)` or inside a `JobDefinition` from `defineJob()`, stored per `queue:event`
 - Invoked inside Remq when processing messages in `processJob()`
+
+### `JobDefinition<TApp, TData>`
+
+Object shape returned by `defineJob()`: `{ event, handler, options? }`. Pass to `remq.on(definition)`.
 
 ### `EmitFunction` / `EmitOptions`
 
@@ -198,6 +233,7 @@ Handler function invoked for each job.
 **EmitOptions:** `queue?` (default `'default'`), `id?`, `priority?`, `delay?` (Date), `retryCount?`, `retryDelayMs?`, `repeat?`, `attempts?`. `delay` replaces the previous `delayUntil`; internally mapped to run-at time.
 
 **Where used:**
+
 - Exposed as `Remq.emit()` and injected onto handler context as `ctx.emit`
 - Cron bootstrap in `on()` uses fire-and-forget `emit(event, {}, { queue, repeat, attempts })`
 
@@ -210,20 +246,23 @@ Options for `on(event, handler, options?)`: `queue?`, `repeat?`, `attempts?`, `d
 Options for `Remq.create()`.
 
 **Parameters:**
+
 - `db: RedisConnection` - Redis connection for job storage (required)
-- `expose?: number` - Port to expose a task-manager API (default: `4000`)
+- `expose?: number` - Port to expose a job-manager API (default: `4000`)
 - `ctx?: T` - Context object passed to handlers
 - `concurrency?: number` - Number of concurrent jobs (default: `1`)
 - `streamdb?: RedisConnection` - Optional Redis connection for streams (defaults to `db`)
 - `processor?: { retry?, dlq?, debounce?, ignoreConfigErrors? }` - Processor policy options
 
 **Defaults (applied in constructor):**
+
 - `concurrency` defaults to `1`
 - `streamdb` defaults to `db`
 - `processor` defaults to `{}` when omitted
 - `ctx` defaults to `{}` and is augmented with `emit`
 
 **Where used:**
+
 - Stored in Remq constructor
 - `concurrency` passed into `Processor` consumer options
 - `streamdb` used by `emit()` and `ensureConsumerGroup()`

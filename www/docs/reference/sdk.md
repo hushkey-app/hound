@@ -1,62 +1,60 @@
 ---
-title: Sdk
-description: Client SDK for queue administration and external clients.
+title: RemqAdmin
+description: Client for queue administration and external clients.
 ---
 
-# Sdk
+# RemqAdmin
 
-The `Sdk` class is the client SDK for queue management. It provides CRUD and
+The `RemqAdmin` class is the client for queue management. It provides CRUD and
 control for admin UIs and external clients over jobs stored in Redis.
 
 ## Minimal example
 
 ```typescript
-const sdk = new Sdk(db);
+const admin = new RemqAdmin(db);
 
-const queues = await sdk.getQueuesInfo();
-const failedTasks = await sdk.listTasks({
+const queues = await admin.queuesInfo();
+const failedJobs = await admin.listJobs({
   queue: 'default',
   status: 'failed',
   limit: 10,
 });
-if (failedTasks[0]) {
-  await sdk.retryTask(failedTasks[0].id, 'default');
+if (failedJobs[0]) {
+  await admin.retryJob(failedJobs[0].id, 'default');
 }
 ```
 
 ## Constructor
 
 ```typescript
-new Sdk(db: RedisConnection)
+new RemqAdmin(db: RedisConnection, remq?: Remq)
 ```
 
 `db` is the Redis connection used for CRUD and control operations. It should be
-the same connection used by Remq so queue state is consistent.
+the same connection used by Remq so queue state is consistent. Optional `remq`
+enables `onJobFinished()` and proper `retryJob()` (re-queues via `remq.emit()`).
 
 ## Types
 
-| Type | Purpose | Main fields |
-| --- | --- | --- |
-| `AdminJobData` | Stored job record | `id`, `state`, `status`, timestamps (`timestamp`, `lastRun`, `delayUntil`, `lockUntil`), `logs`, `errors`, `paused` |
-| `ListJobsOptions` | List/filter options for `listTasks` | `queue`, `status`, `limit`, `offset` |
-| `TaskStats` | Per-queue status counts | `queue`, `waiting`, `processing`, `completed`, `failed`, `delayed`, `total` |
-| `QueueInfo` | Queue name + stats bundle | `name`, `stats` |
+| Type          | Purpose                            | Main fields                                                                                                         |
+| ------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `Job`         | Stored job record                  | `id`, `state`, `status`, timestamps (`timestamp`, `lastRun`, `delayUntil`, `lockUntil`), `logs`, `errors`, `paused` |
+| `ListOptions` | List/filter options for `listJobs` | `queue`, `status`, `limit`, `offset`                                                                                |
+| `QueueStats`  | Per-queue status counts            | `queue`, `waiting`, `processing`, `completed`, `failed`, `delayed`, `total`                                         |
+| `QueueInfo`   | Queue name + stats bundle          | `name`, `stats`                                                                                                     |
 
-## AdminJobData
+## Job
 
-`AdminJobData` represents a stored job record.
+`Job` represents a stored job record.
 
 ```typescript
-interface AdminJobData {
+interface Job {
   id: string;
   state: {
     name: string;
     queue: string;
     data?: unknown;
-    options?: {
-      repeat?: { pattern: string };
-      [key: string]: unknown;
-    };
+    options?: Record<string, unknown>;
   };
   status: 'waiting' | 'processing' | 'completed' | 'failed' | 'delayed';
   delayUntil: number;
@@ -68,17 +66,17 @@ interface AdminJobData {
   repeatCount: number;
   repeatDelayMs: number;
   logs: Array<{ message: string; timestamp: number }>;
-  errors: string[];
+  errors: Array<{ message: string; stack?: string; timestamp: number }>;
   timestamp: number;
   lastRun?: number;
   paused?: boolean;
 }
 ```
 
-## ListJobsOptions
+## ListOptions
 
 ```typescript
-interface ListJobsOptions {
+interface ListOptions {
   queue?: string;
   status?: 'waiting' | 'processing' | 'completed' | 'failed' | 'delayed';
   limit?: number;
@@ -86,12 +84,12 @@ interface ListJobsOptions {
 }
 ```
 
-queue is required by `listTasks` and is validated at runtime.
+`queue` is required by `listJobs` and is validated at runtime.
 
-## TaskStats and QueueInfo
+## QueueStats and QueueInfo
 
 ```typescript
-interface TaskStats {
+interface QueueStats {
   queue: string;
   waiting: number;
   processing: number;
@@ -103,27 +101,27 @@ interface TaskStats {
 
 interface QueueInfo {
   name: string;
-  stats: TaskStats;
+  stats: QueueStats;
 }
 ```
 
 ## Methods
 
-### `getTask(taskId: string, queue: string): Promise<AdminJobData | null>`
+### `getJob(jobId: string, queue: string): Promise<Job | null>`
 
 Params:
 
-- `taskId` (string) - Task id to look up.
+- `jobId` (string) - Job id to look up.
 - `queue` (string) - Queue name to search.
 
 Returns the job data or `null` if not found. The lookup checks all
 known statuses (`waiting`, `processing`, `completed`, `failed`, `delayed`).
 
-### `listTasks(options?: ListJobsOptions): Promise<AdminJobData[]>`
+### `listJobs(options?: ListOptions): Promise<Job[]>`
 
 Lists jobs for a queue with optional status filtering and pagination.
 
-`ListJobsOptions`:
+`ListOptions`:
 
 - `queue` (required) - Queue name to list.
 - `status` (optional) - Status filter (`waiting`, `processing`, `completed`, `failed`, `delayed`).
@@ -131,7 +129,7 @@ Lists jobs for a queue with optional status filtering and pagination.
 - `offset` (optional) - Pagination offset.
 
 ```typescript
-const tasks = await sdk.listTasks({
+const jobs = await admin.listJobs({
   queue: 'default',
   status: 'failed',
   limit: 50,
@@ -144,34 +142,32 @@ Notes:
 - `queue` is required and missing it throws.
 - Jobs are sorted by `timestamp` (newest first).
 
-### `deleteTask(taskId: string, queue: string): Promise<void>`
+### `deleteJob(jobId: string, queue: string): Promise<void>`
 
-Deletes a job and its logs from Redis.
+Deletes a job and its status keys from Redis.
 
-### `getQueueStats(queue: string): Promise<TaskStats>`
+### `stats(queue: string): Promise<QueueStats>`
 
-Returns a `TaskStats` object with counts by status plus a `total` for a single queue.
+Returns a `QueueStats` object with counts by status plus a `total` for a single queue.
 
-### `getQueues(): Promise<string[]>`
+### `queues(): Promise<string[]>`
 
 Scans Redis keys and returns discovered queue names.
 
-### `getQueuesInfo(): Promise<QueueInfo[]>`
+### `queuesInfo(): Promise<QueueInfo[]>`
 
 Returns all queues with their statistics as `QueueInfo` objects (`name` + `stats`).
 
-### `retryTask(taskId, queue)`
+### `retryJob(jobId, queue)`
 
-Retries a job by recreating it as `waiting`, incrementing `retriedAttempts`,
-and appending a retry log entry. Returns the updated job or `null` if the job
-is missing. Throws if the job status is not `failed`.
+Retries a failed job. When RemqAdmin is constructed with a Remq instance, it uses
+`remq.emit()` so the job is re-queued and processed. Returns the job or `null`
+if not found. Throws if the job status is not `failed`. Only failed jobs can be retried. Without Remq, only
+Redis state is updated (job is not re-queued to the stream).
 
-Note: this method only updates Redis state. Re-emit the job via
-`Remq.emit()` to actually process it.
+### `cancelJob(jobId, queue)`, `pause`, `resume`, `isPaused`, `pauseJob`, `resumeJob`
 
-### `cancelTask(taskId, queue)`, `pause`, `resume`, `isPaused`, `pauseTask`, `resumeTask`
-
-Cancel/pause/resume tasks and queues. See core SDK README for details.
+Cancel/pause/resume jobs and queues. See core `libs/sdk/README.md` for details.
 
 ## Next Steps
 

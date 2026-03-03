@@ -1,14 +1,14 @@
-import { assert } from "@std/assert";
+import { assert } from '@std/assert';
 
 const skippedDirs = new Set([
-  "node_modules",
-  ".git",
-  ".ralphy",
-  ".ralphy-worktrees",
-  ".ralphy-sandboxes",
-  "dist",
-  "build",
-  ".vitepress",
+  'node_modules',
+  '.git',
+  '.ralphy',
+  '.ralphy-worktrees',
+  '.ralphy-sandboxes',
+  'dist',
+  'build',
+  '.vitepress',
 ]);
 
 async function* walkMarkdownFiles(root: URL): AsyncGenerator<URL> {
@@ -17,21 +17,21 @@ async function* walkMarkdownFiles(root: URL): AsyncGenerator<URL> {
       continue;
     }
 
-    const entryUrl = new URL(entry.name + (entry.isDirectory ? "/" : ""), root);
+    const entryUrl = new URL(entry.name + (entry.isDirectory ? '/' : ''), root);
 
     if (entry.isDirectory) {
       yield* walkMarkdownFiles(entryUrl);
       continue;
     }
 
-    if (entry.isFile && entry.name.endsWith(".md")) {
+    if (entry.isFile && entry.name.endsWith('.md')) {
       yield entryUrl;
     }
   }
 }
 
-Deno.test("markdown code snippets use consistent TS fence tags and valid imports", async () => {
-  const repoRoot = new URL("../../", import.meta.url);
+Deno.test('markdown code snippets use consistent TS fence tags and valid imports', async () => {
+  const repoRoot = new URL('../../', import.meta.url);
   const tsFenceTags = new Set<string>();
   const invalidImportPaths: string[] = [];
   const invalidAliasMatches: string[] = [];
@@ -39,32 +39,32 @@ Deno.test("markdown code snippets use consistent TS fence tags and valid imports
   for await (const fileUrl of walkMarkdownFiles(repoRoot)) {
     const content = await Deno.readTextFile(fileUrl);
 
-    if (content.includes("@core_v2")) {
+    if (content.includes('@core_v2')) {
       invalidAliasMatches.push(fileUrl.pathname);
     }
 
     const lines = content.split(/\r?\n/);
     let inFence = false;
-    let fenceTag = "";
+    let fenceTag = '';
 
     for (const line of lines) {
-      if (line.startsWith("```")) {
+      if (line.startsWith('```')) {
         if (!inFence) {
           fenceTag = line.slice(3).trim();
-          if (fenceTag === "ts" || fenceTag === "typescript") {
+          if (fenceTag === 'ts' || fenceTag === 'typescript') {
             tsFenceTags.add(fenceTag);
           }
           inFence = true;
         } else {
           inFence = false;
-          fenceTag = "";
+          fenceTag = '';
         }
         continue;
       }
 
-      if (inFence && (fenceTag === "ts" || fenceTag === "typescript")) {
+      if (inFence && (fenceTag === 'ts' || fenceTag === 'typescript')) {
         const match = line.match(/from\s+['"]([^'"]+)['"]/);
-        if (match && match[1].startsWith("@core_v2")) {
+        if (match && match[1].startsWith('@core_v2')) {
           invalidImportPaths.push(`${fileUrl.pathname}: ${match[1]}`);
         }
       }
@@ -73,16 +73,22 @@ Deno.test("markdown code snippets use consistent TS fence tags and valid imports
 
   assert(
     tsFenceTags.size <= 1,
-    `Expected a single TS code fence tag, found: ${[...tsFenceTags].join(", ")}`,
+    `Expected a single TS code fence tag, found: ${
+      [...tsFenceTags].join(', ')
+    }`,
   );
 
   assert(
     invalidAliasMatches.length === 0,
-    `Expected no @core_v2 aliases in markdown. Found in: ${invalidAliasMatches.join(", ")}`,
+    `Expected no @core_v2 aliases in markdown. Found in: ${
+      invalidAliasMatches.join(', ')
+    }`,
   );
 
   assert(
     invalidImportPaths.length === 0,
-    `Expected no @core_v2 imports in TS fences. Found: ${invalidImportPaths.join(", ")}`,
+    `Expected no @core_v2 imports in TS fences. Found: ${
+      invalidImportPaths.join(', ')
+    }`,
   );
 });

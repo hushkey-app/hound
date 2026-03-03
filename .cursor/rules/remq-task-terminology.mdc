@@ -1,30 +1,40 @@
 ---
-description: Use "task" terminology instead of "job" for queued work in remq
+description: Use "job" terminology in the exposed Remq API (task → job, tasks → jobs)
 alwaysApply: true
 ---
 
-# Prefer "task" over "job"
+# Exposed terminology: job / jobs
 
-In this codebase, **always use "task"** (not "job") when naming or referring to a single unit of queued work.
+In this codebase, the **exposed (public) API** uses **"job"** and **"jobs"** for
+a single unit of queued work and collections of them.
 
 ## API and code
 
-- **Methods**: `onTaskFinished`, not `onJobFinished`.
-- **Payloads**: Use `taskId`, not `jobId`, in callback payloads and public types.
-- **Variables**: Prefer `task`, `taskId`, `taskIds` over `job`, `jobId`, `jobIds` in user-facing code and examples.
+- **Class**: `RemqAdmin` (admin client).
+- **Methods**: `onJobFinished`, not `onTaskFinished`. Use `getJob`, `listJobs`,
+  `deleteJob`, `retryJob`, `cancelJob`, `pauseJob`, `resumeJob`.
+- **Payloads**: Use `jobId`, not `taskId`, in callback payloads and public
+  method parameters.
+- **Variables**: Prefer `job`, `jobId`, `jobs`, `jobIds` in user-facing code
+  and examples.
 
 ## Examples
 
 ```ts
 // ✅ GOOD
-remq.onTaskFinished((task) => {
-  console.log('Task finished:', task.taskId, task.status);
+const admin = new RemqAdmin(db, remq);
+admin.onJobFinished((payload) => {
+  console.log("Job finished:", payload.jobId, payload.status);
 });
+const job = await admin.getJob(jobId, 'default');
+const jobs = await admin.listJobs({ queue: 'default', limit: 50 });
 
-// ❌ BAD
-remq.onJobFinished((job) => {
-  console.log('Job finished:', job.jobId);
-});
+// ❌ BAD (in new code / docs)
+sdk.onTaskFinished((t) => console.log(t.taskId));
+await sdk.getTask(taskId, queue);
+await sdk.listTasks({ queue });
 ```
 
-Internal implementation (e.g. Redis keys, stream keys) may still use "job" where it predates this convention; when adding new APIs, docs, or examples, use **task** first.
+Internal implementation (e.g. Redis keys, stream keys, task-manager symbols)
+may still use "task" where it predates this convention; when adding new APIs,
+docs, or examples, use **job** / **jobs** in the exposed surface.

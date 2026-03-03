@@ -1,12 +1,16 @@
 import type { ConsumerOptions } from '../../types/consumer.ts';
-import type { Message, MessageContext, ConsumerEvents } from '../../types/message.ts';
+import type {
+  ConsumerEvents,
+  Message,
+  MessageContext,
+} from '../../types/message.ts';
 import { StreamReader } from './stream-reader.ts';
 import { ConcurrencyPool } from './concurrency-pool.ts';
 
 /**
  * Consumer - Runtime engine for processing messages from Redis Streams
- * 
- * Based on old worker's robust processTasksLoop logic
+ *
+ * Based on old worker's robust processJobsLoop logic
  */
 export class Consumer extends EventTarget {
   private readonly streamdb: ConsumerOptions['streamdb'];
@@ -21,7 +25,7 @@ export class Consumer extends EventTarget {
   #isProcessing = false;
   #processingController = new AbortController();
   #processingFinished: Promise<void> = Promise.resolve();
-  readonly #activeTasks = new Set<Promise<void>>(); // Like old worker line 63
+  readonly #activeJobs = new Set<Promise<void>>(); // Like old worker line 63
   #consecutiveRedisErrors = 0;
 
   constructor(options: ConsumerOptions) {
@@ -34,7 +38,7 @@ export class Consumer extends EventTarget {
     if (!options.handler) {
       throw new Error('Handler is required');
     }
-    
+
     this.streamdb = options.streamdb;
     this.streams = options.streams;
     this.group = options.group || 'processor';
@@ -64,20 +68,22 @@ export class Consumer extends EventTarget {
       const hostname = typeof Deno !== 'undefined' && Deno.hostname
         ? Deno.hostname()
         : 'unknown';
-      
+
       // @ts-ignore - Deno.pid might not be in types
       const pid = typeof Deno !== 'undefined' && Deno.pid !== undefined
         ? Deno.pid
         : Date.now();
-      
+
       return `consumer-${hostname}-${pid}`;
     } catch {
-      return `consumer-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      return `consumer-${Date.now()}-${
+        Math.random().toString(36).substring(2, 9)
+      }`;
     }
   }
 
   /**
-   * Starts processing messages (like old worker processTasks)
+   * Starts processing messages (like old worker processJobs)
    */
   async start(options: { signal?: AbortSignal } = {}): Promise<void> {
     // Ensure consumer groups once at startup, not on every poll (avoids Redis round trip per stream per cycle)
@@ -93,7 +99,7 @@ export class Consumer extends EventTarget {
   }
 
   /**
-   * Main processing loop (copied from old worker processTasksLoop)
+   * Main processing loop (copied from old worker processJobsLoop)
    */
   async #processLoop(
     options: { signal?: AbortSignal; controller: AbortController },
@@ -111,13 +117,15 @@ export class Consumer extends EventTarget {
         try {
           // Read messages from all streams (work-stealing approach like old worker line 271-280)
           let messages: Message[] = [];
-          
+
           for (const streamKey of this.streams) {
             // Extract queue name from stream key (e.g., "default-stream" -> "default")
             const queueName = streamKey.replace('-stream', '');
-            const queueMessages = await this.streamReader.readQueueStream(queueName);
+            const queueMessages = await this.streamReader.readQueueStream(
+              queueName,
+            );
             messages.push(...queueMessages);
-            
+
             // If we got messages, break to process them (work-stealing)
             if (queueMessages.length > 0) {
               break;
@@ -141,9 +149,11 @@ export class Consumer extends EventTarget {
             }
 
             // Wait if we've hit concurrency limit (like old worker line 153-163)
-            while (this.#activeTasks.size >= this.concurrencyPool.maxConcurrency) {
+            while (
+              this.#activeJobs.size >= this.concurrencyPool.maxConcurrency
+            ) {
               await Promise.race([
-                Promise.race(this.#activeTasks),
+                Promise.race(this.#activeJobs),
                 this.delay(this.pollIntervalMs),
               ]);
 
@@ -161,12 +171,12 @@ export class Consumer extends EventTarget {
               }
             })();
 
-            // Track the active task (like old worker line 224)
-            this.#activeTasks.add(taskPromise);
+            // Track the active job (like old worker line 224)
+            this.#activeJobs.add(taskPromise);
 
             // Remove from tracking when done
             taskPromise.finally(() => {
-              this.#activeTasks.delete(taskPromise);
+              this.#activeJobs.delete(taskPromise);
             });
           }
         } catch (error) {
@@ -174,9 +184,9 @@ export class Consumer extends EventTarget {
           const isTransient = this.#isRedisTransientError(error);
           const delayMs = isTransient
             ? Math.min(
-                this.pollIntervalMs * Math.pow(2, this.#consecutiveRedisErrors),
-                30000,
-              )
+              this.pollIntervalMs * Math.pow(2, this.#consecutiveRedisErrors),
+              30000,
+            )
             : this.pollIntervalMs;
           if (isTransient) this.#consecutiveRedisErrors += 1;
           else this.#consecutiveRedisErrors = 0;
@@ -249,16 +259,16 @@ export class Consumer extends EventTarget {
   /**
    * Set of currently running tasks
    */
-  get activeTasks(): Set<Promise<void>> {
-    return this.#activeTasks;
+  get activeJobs(): Set<Promise<void>> {
+    return this.#activeJobs;
   }
 
   /**
    * Waits for all active tasks to complete
    */
-  async waitForActiveTasks(): Promise<void> {
-    if (this.#activeTasks.size > 0) {
-      await Promise.all(this.#activeTasks);
+  async waitForActiveJobs(): Promise<void> {
+    if (this.#activeJobs.size > 0) {
+      await Promise.all(this.#activeJobs);
     }
   }
 

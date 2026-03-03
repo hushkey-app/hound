@@ -63,7 +63,7 @@ export default defineConfig({
             { text: 'Remq', link: '/reference/task-manager' },
             { text: 'Consumer', link: '/reference/consumer' },
             { text: 'Processor', link: '/reference/processor' },
-            { text: 'Sdk', link: '/reference/sdk' },
+            { text: 'RemqAdmin', link: '/reference/sdk' },
           ],
         },
       ],

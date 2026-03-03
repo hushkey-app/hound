@@ -39,7 +39,9 @@ export interface DebounceConfig {
    * Function to generate debounce key from message
    * If not provided, uses message.id as key
    */
-  keyFn?: (message: { id: string; data?: unknown; [key: string]: unknown }) => string;
+  keyFn?: (
+    message: { id: string; data?: unknown; [key: string]: unknown },
+  ) => string;
 }
 
 /**
@@ -86,7 +88,11 @@ export interface DLQConfig {
    * Only evaluated when streamKey is set
    * @default sends to DLQ when retries are exhausted
    */
-  shouldSendToDLQ?: (message: ProcessableMessage, error: Error, attempts: number) => boolean;
+  shouldSendToDLQ?: (
+    message: ProcessableMessage,
+    error: Error,
+    attempts: number,
+  ) => boolean;
 }
 
 /**

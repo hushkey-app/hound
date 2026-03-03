@@ -1,11 +1,11 @@
 ---
 title: Admin Dashboard
-description: Build admin dashboards with the Sdk for queue visibility and controls.
+description: Build admin dashboards with RemqAdmin for queue visibility and controls.
 ---
 
 # Admin Dashboard
 
-REMQ ships with the `Sdk` for building admin consoles and operational dashboards.
+REMQ ships with `RemqAdmin` for building admin consoles and operational dashboards.
 Use it to inspect queues, browse jobs, and perform control actions like pause,
 retry, or cancel.
 
@@ -14,71 +14,64 @@ retry, or cancel.
 Add an admin dashboard when you need visibility into queue health, need to
 inspect failed jobs, or want safe operational controls for on-call workflows.
 
-## Connect Sdk
+## Connect RemqAdmin
 
-`Sdk` should use the same Redis connection as your Remq instance so it sees
+`RemqAdmin` should use the same Redis connection as your Remq instance so it sees
 consistent queue state.
 
 ```typescript
 import Redis from 'npm:ioredis';
-import { Sdk, Remq } from 'npm:@leotermine/tasker';
+import { Remq, RemqAdmin } from 'npm:@leotermine/tasker';
 
 const db = new Redis({ host: '127.0.0.1', port: 6379 });
 const remq = Remq.create({ db });
-const sdk = new Sdk(db);
+const admin = new RemqAdmin(db);
 ```
 
 ## Queue overview cards
 
-Use `getQueuesInfo()` or `getQueueStats()` to populate queue summary tiles.
-Each `TaskStats` entry includes per-status counts.
+Use `queuesInfo()` or `stats()` to populate queue summary tiles.
+Each `QueueStats` entry includes per-status counts.
 
 ```typescript
-const queues = await sdk.getQueuesInfo();
-const stats = await sdk.getQueueStats('default');
+const queues = await admin.queuesInfo();
+const stats = await admin.stats('default');
 ```
 
 ## Job browser and detail views
 
-List jobs with filters and display details with a task lookup.
+List jobs with filters and display details with a job lookup.
 
 ```typescript
-const failedTasks = await sdk.listTasks({
+const failedJobs = await admin.listJobs({
   queue: 'default',
   status: 'failed',
   limit: 25,
   offset: 0,
 });
 
-const task = await sdk.getTask(failedTasks[0]?.id ?? '', 'default');
+const job = await admin.getJob(failedJobs[0]?.id ?? '', 'default');
 ```
 
 ## Control actions
 
-Expose simple actions with guardrails. `retryTask()` and `deleteTask()` are the
-most common controls when you need to re-run or cancel a job.
+Expose simple actions with guardrails. `retryJob()` and `deleteJob()` are the
+most common controls when you need to re-run or remove a job.
 
 ```typescript
-if (failedTasks[0]) {
-  await sdk.retryTask(failedTasks[0].id, 'default');
-  await taskManager.emit({
-    event: failedTasks[0].state.name,
-    queue: failedTasks[0].state.queue,
-    data: failedTasks[0].state.data,
-    options: failedTasks[0].state.options,
-  });
+if (failedJobs[0]) {
+  await admin.retryJob(failedJobs[0].id, 'default');
 }
 
-await sdk.deleteTask('job_123', 'default');
+await admin.deleteJob('job_123', 'default');
 ```
 
 Notes:
 
-- `retryTask()` only updates Redis state. Re-emit the job with `Remq.emit()`
-  to actually process it.
-- `deleteTask()` removes a job before it runs; treat it as a cancel action.
+- When RemqAdmin is constructed with a Remq instance (`new RemqAdmin(db, remq)`), `retryJob()` uses `remq.emit()` so the job is re-queued and processed. Without Remq, only Redis state is updated.
+- `deleteJob()` removes a job and its status keys; use it to cancel or clean up.
 
-For full options and types, see the [Sdk API Reference](/reference/sdk).
+For full options and types, see the [RemqAdmin API Reference](/reference/sdk).
 
 ## Recommended dashboard sections
 
@@ -89,6 +82,6 @@ For full options and types, see the [Sdk API Reference](/reference/sdk).
 
 ## Next Steps
 
-- Review the [Sdk API](/reference/sdk)
+- Review the [RemqAdmin API](/reference/sdk)
 - Compare with [Task Management](/guide/task-management)
 - Explore [Processor](/reference/processor) for handler policies

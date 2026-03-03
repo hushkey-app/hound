@@ -1,12 +1,15 @@
 import { Consumer } from '../consumer/consumer.ts';
-import type { ProcessorOptions, ProcessableMessage } from '../../types/processor.ts';
+import type {
+  ProcessableMessage,
+  ProcessorOptions,
+} from '../../types/processor.ts';
 import type { Message, MessageContext } from '../../types/message.ts';
 import { DebounceManager } from './debounce-manager.ts';
 import type { RedisConnection } from '../../types/redis-client.ts';
 
 /**
  * Processor layer - wraps Consumer with policy logic (retries, delays, DLQ, debouncing)
- * 
+ *
  * Based on old worker's processTaskItem logic for handling delays
  */
 export class Processor {
@@ -16,7 +19,6 @@ export class Processor {
   private readonly dlqConfig: ProcessorOptions['dlq'];
   private readonly streamMaxLen?: number;
   private readonly debounceManager?: DebounceManager;
-  private readonly ignoreConfigErrors: boolean;
   #debounceCleanupIntervalId?: ReturnType<typeof setInterval>;
 
   constructor(options: ProcessorOptions) {
@@ -24,7 +26,6 @@ export class Processor {
     this.retryConfig = options.retry;
     this.dlqConfig = options.dlq;
     this.streamMaxLen = options.streamMaxLen;
-    this.ignoreConfigErrors = options.ignoreConfigErrors ?? true;
 
     // Setup debounce if configured (DebounceManager expects seconds, not ms)
     if (options.debounce) {
@@ -32,7 +33,9 @@ export class Processor {
         ? options.debounce
         : options.debounce.debounce ?? 0;
       const debounceSeconds = Math.ceil(debounceMs / 1000); // Convert ms to seconds
-      const keyFn = typeof options.debounce === 'object' ? options.debounce.keyFn : undefined;
+      const keyFn = typeof options.debounce === 'object'
+        ? options.debounce.keyFn
+        : undefined;
       this.debounceManager = new DebounceManager(debounceSeconds, keyFn);
     }
 
@@ -58,7 +61,15 @@ export class Processor {
 
       // 1. Check debounce
       if (this.debounceManager) {
-        if (!this.debounceManager.shouldProcess(processableMessage as { id: string; data?: unknown; [key: string]: unknown })) {
+        if (
+          !this.debounceManager.shouldProcess(
+            processableMessage as {
+              id: string;
+              data?: unknown;
+              [key: string]: unknown;
+            },
+          )
+        ) {
           await ctx.ack();
           return;
         }
@@ -79,9 +90,15 @@ export class Processor {
       // 3. Execute handler with retry logic
       try {
         await originalHandler(message, ctx);
-        
+
         if (this.debounceManager) {
-          this.debounceManager.markProcessed(processableMessage as { id: string; data?: unknown; [key: string]: unknown });
+          this.debounceManager.markProcessed(
+            processableMessage as {
+              id: string;
+              data?: unknown;
+              [key: string]: unknown;
+            },
+          );
         }
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error));
@@ -101,13 +118,18 @@ export class Processor {
     const taskDataAny = message.data as any;
     const retryCount = taskDataAny.retryCount ?? 0;
     const maxRetries = this.retryConfig?.maxRetries ?? 0;
-    const retryDelayMs = taskDataAny.retryDelayMs ?? this.retryConfig?.retryDelayMs ?? 1000;
+    const retryDelayMs = taskDataAny.retryDelayMs ??
+      this.retryConfig?.retryDelayMs ?? 1000;
 
     // Check if should retry
     const shouldRetry = retryCount > 0 && maxRetries > 0;
     const attempts = (taskDataAny.retriedAttempts || 0) + 1;
-    
-    if (shouldRetry && (!this.retryConfig?.shouldRetry || this.retryConfig.shouldRetry(error, attempts))) {
+
+    if (
+      shouldRetry &&
+      (!this.retryConfig?.shouldRetry ||
+        this.retryConfig.shouldRetry(error, attempts))
+    ) {
       // Re-queue with retry
       const retryMessage: ProcessableMessage = {
         ...message,
@@ -118,7 +140,7 @@ export class Processor {
           delayUntil: Date.now() + retryDelayMs,
         },
       };
-      
+
       await this.requeueMessage(retryMessage);
       await ctx.ack();
       return;
@@ -142,7 +164,15 @@ export class Processor {
   async #xadd(streamKey: string, dataJson: string): Promise<string | null> {
     const maxLen = this.streamMaxLen;
     if (typeof maxLen === 'number' && maxLen > 0) {
-      return await this.streamdb.xadd(streamKey, 'MAXLEN', '~', maxLen, '*', 'data', dataJson);
+      return await this.streamdb.xadd(
+        streamKey,
+        'MAXLEN',
+        '~',
+        maxLen,
+        '*',
+        'data',
+        dataJson,
+      );
     }
     return await this.streamdb.xadd(streamKey, '*', 'data', dataJson);
   }
@@ -154,7 +184,7 @@ export class Processor {
   private async requeueMessage(message: ProcessableMessage): Promise<void> {
     const streamKey = message.streamKey;
     const messageDataAny = message.data as any;
-    
+
     // Preserve original timestamp (like old worker line 203-206)
     const originalTimestamp = messageDataAny.timestamp || Date.now();
     const messageData = {
@@ -174,7 +204,7 @@ export class Processor {
     attempts: number,
   ): Promise<void> {
     const dlqStreamKey = this.dlqConfig?.streamKey || 'dlq-stream';
-    
+
     const dlqMessage = {
       ...message.data,
       dlqReason: error.message,
@@ -211,8 +241,8 @@ export class Processor {
   /**
    * Waits for all active tasks to complete
    */
-  async waitForActiveTasks(): Promise<void> {
-    await this.consumer.waitForActiveTasks();
+  async waitForActiveJobs(): Promise<void> {
+    await this.consumer.waitForActiveJobs();
   }
 
   /**

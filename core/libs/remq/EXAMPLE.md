@@ -54,7 +54,7 @@ export { taskManager };
 
 ```typescript
 // Register a cron job (runs every 5 minutes)
-taskManager.on('periodic-task', async (ctx) => {
+taskManager.on('periodic-job', async (ctx) => {
   console.log('Cron job running:', new Date());
 }, { queue: 'scheduler', repeat: { pattern: '*/5 * * * *' } });
 ```

@@ -1,20 +1,20 @@
-import { assert } from "@std/assert";
+import { assert } from '@std/assert';
 
-Deno.test("admin dashboard guide introduces Sdk workflows", async () => {
-  const docUrl = new URL("../docs/guide/admin-dashboard.md", import.meta.url);
+Deno.test('admin dashboard guide introduces RemqAdmin workflows', async () => {
+  const docUrl = new URL('../docs/guide/admin-dashboard.md', import.meta.url);
   const content = await Deno.readTextFile(docUrl);
 
   const requiredSnippets = [
-    "Sdk",
-    "getQueuesInfo",
-    "getQueueStats",
-    "listTasks",
-    "getTask",
-    "retryTask",
-    "deleteTask",
-    "Remq.emit",
-    "/reference/sdk",
-    "full options and types",
+    'RemqAdmin',
+    'queuesInfo',
+    'stats',
+    'listJobs',
+    'getJob',
+    'retryJob',
+    'deleteJob',
+    'remq.emit',
+    '/reference/sdk',
+    'full options and types',
   ];
 
   for (const snippet of requiredSnippets) {
@@ -25,12 +25,11 @@ Deno.test("admin dashboard guide introduces Sdk workflows", async () => {
   }
 
   const forbiddenSnippets = [
-    "pauseQueue",
-    "resumeQueue",
-    "isPaused",
-    "pauseTask",
-    "resumeTask",
-    "cancelTask",
+    'pauseQueue',
+    'resumeQueue',
+    'pauseTask',
+    'resumeTask',
+    'cancelTask',
   ];
 
   for (const snippet of forbiddenSnippets) {

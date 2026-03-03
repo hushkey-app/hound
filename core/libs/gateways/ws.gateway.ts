@@ -3,7 +3,7 @@
  * Uses Deno's built-in Deno.serve and Deno.upgradeWebSocket.
  */
 
-import type { Remq } from '../task-manager/mod.ts';
+import type { Remq } from '../remq/mod.ts';
 
 export type WsConnectionHandler = (ws: WebSocket, req: Request) => void;
 
@@ -44,7 +44,7 @@ export function createWsGateway(options: WsGatewayOptions) {
           onConnection?.(socket, req);
         });
 
-        // Message handling (emit + queued/task_finished reply) is done in onConnection handler (handleWsConnection)
+        // Message handling (emit + queued/job_finished reply) is done in onConnection handler (handleWsConnection)
 
         return response;
       } catch (err) {

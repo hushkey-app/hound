@@ -17,7 +17,9 @@ Deno.test('Remq applies documented defaults and on() queue default', () => {
   };
 
   if (internal.concurrency !== 1) {
-    throw new Error(`Expected concurrency default 1, got ${internal.concurrency}`);
+    throw new Error(
+      `Expected concurrency default 1, got ${internal.concurrency}`,
+    );
   }
 
   if (internal.streamdb !== fakeRedis) {
