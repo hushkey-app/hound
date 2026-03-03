@@ -13,6 +13,7 @@ import type {
   EmitFunction,
   EmitOptions,
   HandlerOptions,
+  JobDefinition,
   JobHandler,
   JobManagerOptions,
   JobSocketContext,
@@ -29,6 +30,7 @@ export type {
   EmitOptions,
   HandlerOptions,
   JobContext,
+  JobDefinition,
   JobHandler,
   JobManagerOptions,
 } from '../../types/remq.ts';
@@ -117,26 +119,42 @@ export class Remq<
 
   /**
    * Register a handler for an event/job. Event names support dot notation (e.g. 'host.sync', 'user.welcome').
+   * Accepts either (event, handler, options?) or a JobDefinition from defineJob().
    * Returns this for fluent chaining.
    */
   on<D = unknown>(
-    event: string,
-    handler: JobHandler<TApp, D>,
+    eventOrDefinition: string | JobDefinition<TApp, D>,
+    handler?: JobHandler<TApp, D>,
     options?: HandlerOptions,
   ): this {
-    const queue = options?.queue ?? 'default';
-    const debounce = options?.debounce;
+    let event: string;
+    let h: JobHandler<TApp, D>;
+    let opts: HandlerOptions | undefined;
+
+    if (typeof eventOrDefinition === 'object') {
+      const def = eventOrDefinition;
+      event = def.event;
+      h = def.handler;
+      opts = def.options;
+    } else {
+      event = eventOrDefinition;
+      h = handler!;
+      opts = options;
+    }
+
+    const queue = opts?.queue ?? 'default';
+    const debounce = opts?.debounce;
 
     if (!event) {
       throw new Error('event is required');
     }
 
-    if (!handler) {
+    if (!h) {
       throw new Error('handler is required');
     }
 
     const handlerKey = `${queue}:${event}`;
-    this.handlers.set(handlerKey, handler as JobHandler<TApp, any>);
+    this.handlers.set(handlerKey, h as JobHandler<TApp, any>);
 
     const streamKey = `${queue}-stream`;
     this.queueStreams.add(streamKey);
@@ -148,11 +166,11 @@ export class Remq<
     }
 
     // Cron bootstrap: fire-and-forget (no await)
-    if (options?.repeat?.pattern) {
+    if (opts?.repeat?.pattern) {
       this.emit(event, {}, {
         queue,
-        repeat: { pattern: options.repeat.pattern },
-        attempts: options.attempts,
+        repeat: { pattern: opts.repeat.pattern },
+        attempts: opts.attempts,
       });
     }
     return this;

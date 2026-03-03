@@ -5,11 +5,13 @@
  */
 
 export { Remq } from './libs/remq/mod.ts';
+export { defineJob } from './types/remq.ts';
 export type {
   EmitFunction,
   EmitOptions,
   HandlerOptions,
   JobContext,
+  JobDefinition,
   JobHandler,
   JobManagerOptions,
 } from './types/remq.ts';

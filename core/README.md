@@ -63,7 +63,7 @@ Main modules for job processing with Redis Streams.
 
 | Type                                                                                                                  | Module                 |
 | --------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| `TaskManagerOptions`, `TaskHandler`, `TaskContext`, `EmitFunction`, `EmitOptions`, `HandlerOptions`, `UpdateFunction` | `types/job-manager.ts` |
+| `JobManagerOptions`, `JobHandler`, `JobContext`, `JobDefinition`, `defineJob`, `EmitFunction`, `EmitOptions`, `HandlerOptions`, `UpdateFunction` | `types/remq.ts` |
 | `ConsumerOptions`, `Message`, `MessageHandler`, `MessageContext`, `ConsumerEvents`                                    | `types/`               |
 | `ProcessorOptions`, `ProcessableMessage`, `RetryConfig`, `DLQConfig`, `DebounceConfig`                                | `types/processor.ts`   |
 | `Job`, `Job`, `ListOptions`, `QueueStats`, `QueueInfo`                                                                | `types/admin.ts`       |

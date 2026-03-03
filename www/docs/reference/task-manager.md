@@ -71,7 +71,7 @@ remq
 
 **HandlerOptions:** `queue?`, `repeat?`, `attempts?`, `debounce?`
 
-- Handlers receive a single `ctx: TaskContext<TApp, TData>` (job identity, data, logger, emit, socket, plus app context).
+- Handlers receive a single `ctx: JobContext<TApp, TData>` (job identity, data, logger, emit, socket, plus app context).
 
 ## Emitting tasks
 

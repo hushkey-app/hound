@@ -78,6 +78,32 @@ export interface HandlerOptions {
 }
 
 /**
+ * Job definition — event + handler + options. Use defineJob() to create.
+ */
+export interface JobDefinition<
+  TApp extends Record<string, unknown> = Record<string, unknown>,
+  TData = unknown,
+> {
+  event: string;
+  handler: JobHandler<TApp, TData>;
+  options?: HandlerOptions;
+}
+
+/**
+ * Typed factory for job definitions. Zero runtime overhead.
+ */
+export function defineJob<
+  TApp extends Record<string, unknown> = Record<string, unknown>,
+  TData = unknown,
+>(
+  event: string,
+  handler: JobHandler<TApp, TData>,
+  options?: HandlerOptions,
+): JobDefinition<TApp, TData> {
+  return { event, handler, options };
+}
+
+/**
  * Job Manager options
  */
 export interface JobManagerOptions<T = unknown> {

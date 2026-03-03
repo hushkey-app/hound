@@ -25,7 +25,7 @@ to the APIs in `core/types` and `core/libs` that matter for the docs.
       matches the real API (remove placeholder `schedule()`; document
       `TaskManager.init()`, `registerHandler()`, `emit` via context, and
       `start()` / lifecycle).
-- [x] **2.2** Document **types**: `TaskHandler<T, D>`, `EmitFunction`,
+- [x] **2.2** Document **types**: `JobHandler<T, D>`, `EmitFunction`,
       `TaskManagerOptions<T>`, `RegisterHandlerOptions<T, D>` (parameters,
       defaults, and where they are used).
 - [x] **2.3** Document **emit options**: `event`, `queue`, `data`, and `options`
