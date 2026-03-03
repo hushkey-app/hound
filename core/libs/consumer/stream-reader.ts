@@ -10,7 +10,6 @@ export class StreamReader {
   private readonly streamdb: RedisConnection;
   private readonly group: string;
   private readonly consumerId: string;
-  private readonly streamMaxLen?: number;
   private readonly readCount: number;
   private readonly blockMs: number;
 
@@ -18,14 +17,12 @@ export class StreamReader {
     streamdb: RedisConnection,
     group: string,
     consumerId: string,
-    streamMaxLen?: number,
     readCount: number = 200,
     blockMs: number = 1000,
   ) {
     this.streamdb = streamdb;
     this.group = group;
     this.consumerId = consumerId;
-    this.streamMaxLen = streamMaxLen;
     this.readCount = readCount;
     this.blockMs = blockMs;
   }
@@ -45,7 +42,9 @@ export class StreamReader {
     } catch (error: unknown) {
       const err = error as { message?: string };
       if (err?.message?.includes('BUSYGROUP')) {
-        // Group already exists, which is fine
+        // Group exists — reset last-delivered-id to 0 so any messages
+        // emitted before start() are not skipped
+        await this.streamdb.xgroup('SETID', streamKey, this.group, '0');
         return;
       }
       throw error;
@@ -54,51 +53,41 @@ export class StreamReader {
 
   /**
    * Reads messages from stream (copied from old worker readQueueStream)
-   * - Claims pending messages >30s idle
+   * - Single xpending: used for claim check (idle >30s) and for trim boundary (oldest un-ACKed)
    * - Reads new messages (XREADGROUP with BLOCK blockMs)
    * - ACKs immediately after reading
-   * - Returns sanitized job data
+   * - Trims only ACKed entries (MINID) so stream stays bounded without dropping unprocessed jobs
    */
   async readQueueStream(queueName: string): Promise<Message[]> {
     const streamKey = `${queueName}-stream`;
     const count = this.readCount;
-    // Consumer groups are ensured once at start (ensureAllConsumerGroups), not on every poll
 
     try {
-      // First try to claim any pending messages (like old worker line 661-692)
+      // Single xpending call — used for both claim check AND trim boundary
       const pendingMessages = await this.streamdb.xpending(
         streamKey,
         this.group,
         '-',
         '+',
         count,
-      );
-
-      interface PendingMessage {
-        id: string;
-        lastDelivered: number;
-      }
+      ) as { id: string; lastDelivered: number }[] | undefined;
 
       if (pendingMessages?.length) {
-        // Claim messages that have been pending too long (30 seconds like old worker line 679)
         const now = Date.now();
-        const claimIds = (pendingMessages as PendingMessage[])
-          .filter((msg) => (now - msg.lastDelivered) > 30000) // 30 seconds threshold
+        const claimIds = pendingMessages
+          .filter((msg) => (now - msg.lastDelivered) > 30000)
           .map((msg) => msg.id);
-
         if (claimIds.length) {
-          // Redis xclaim expects individual message IDs, not an array (like old worker line 684-690)
           await this.streamdb.xclaim(
             streamKey,
             this.group,
             this.consumerId,
-            30000, // Min idle time (like old worker line 688)
-            ...claimIds, // Spread the array to pass individual IDs
+            30000,
+            ...claimIds,
           );
         }
       }
 
-      // Then read new messages (like old worker line 695-706)
       const jobs = await this.streamdb.xreadgroup(
         'GROUP',
         this.group,
@@ -109,41 +98,30 @@ export class StreamReader {
         this.blockMs,
         'STREAMS',
         streamKey,
-        '>', // Only new messages
+        '>',
       ) as [string, [string, string]][];
 
-      if (!jobs?.[0]?.[1]?.length) {
-        return [];
-      }
+      if (!jobs?.[0]?.[1]?.length) return [];
 
       const processedMessages = this.sanitizeStream(jobs, queueName);
 
-      // Acknowledge processed messages immediately (like old worker line 714-720)
       const messageIds = jobs[0][1].map(([id]) => id);
-      await this.streamdb.xack(
-        streamKey,
-        this.group,
-        ...messageIds,
-      );
+      await this.streamdb.xack(streamKey, this.group, ...messageIds);
 
-      // Self-clean: trim stream so it doesn't grow unbounded (prevents memory blowup)
-      if (this.streamMaxLen != null && this.streamMaxLen > 0) {
-        try {
-          await this.streamdb.call(
-            'XTRIM',
-            streamKey,
-            'MAXLEN',
-            '~',
-            this.streamMaxLen,
-          );
-        } catch (trimErr) {
-          console.warn('[remq] Stream XTRIM failed (non-fatal):', trimErr);
-        }
+      // Trim only ACKed entries — use oldest pending as the safe boundary.
+      // If nothing pending, everything is processed — trim up to last ACKed ID.
+      try {
+        const trimId = pendingMessages?.length
+          ? pendingMessages[0].id
+          : messageIds[messageIds.length - 1];
+        await this.streamdb.call('XTRIM', streamKey, 'MINID', '~', trimId);
+      } catch (trimErr) {
+        console.warn('[remq] Stream XTRIM failed (non-fatal):', trimErr);
       }
 
       return processedMessages;
     } catch (error) {
-      console.error('Error reading from stream:', error);
+      console.error('[remq] Error reading from stream:', error);
       return [];
     }
   }

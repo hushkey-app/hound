@@ -1,9 +1,5 @@
 import type { ConsumerOptions } from '../../types/consumer.ts';
-import type {
-  ConsumerEvents,
-  Message,
-  MessageContext,
-} from '../../types/message.ts';
+import type { Message, MessageContext } from '../../types/message.ts';
 import { StreamReader } from './stream-reader.ts';
 import { ConcurrencyPool } from './concurrency-pool.ts';
 
@@ -53,7 +49,6 @@ export class Consumer extends EventTarget {
       this.streamdb,
       this.group,
       this.consumerId,
-      options.streamMaxLen,
       options.read?.count ?? 200,
       options.read?.blockMs ?? 1000,
     );

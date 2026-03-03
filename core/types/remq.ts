@@ -1,3 +1,4 @@
+import type { RedisOptions } from 'ioredis';
 import type { RedisConnection } from './index.ts';
 import type { ProcessorOptions } from './processor.ts';
 
@@ -129,10 +130,18 @@ export interface JobManagerOptions<T = unknown> {
   concurrency?: number;
 
   /**
-   * Optional separate Redis connection for streams (for performance)
-   * If not provided, uses db connection
+   * Optional separate Redis connection for streams.
+   * If omitted, created automatically from redis config (db index + 1).
    */
   streamdb?: RedisConnection;
+
+  /**
+   * Redis connection config used to auto-create the stream connection.
+   * Required if streamdb is not provided. Remq will create a dedicated
+   * connection using db index + 1 for all stream operations (XREADGROUP BLOCK,
+   * XADD, XACK). This prevents blocking admin queries on the main connection.
+   */
+  redis?: RedisOptions;
 
   /**
    * When true, log worker PID and job id when a job is picked up (e.g. for debugging).
@@ -154,9 +163,7 @@ export interface JobManagerOptions<T = unknown> {
      */
     maxLogsPerJob?: number;
     /**
-     * Max stream length per queue stream. After each read+ACK, trims the stream to this length (approximate).
-     * Prevents unbounded stream growth and memory blowup. Set to e.g. 10000 for production.
-     * @default undefined (no trim; stream grows until Redis eviction or manual trim)
+     * @deprecated No longer used. Stream is trimmed after ACK with XTRIM MINID ~ (only ACKed entries; unprocessed jobs never dropped).
      */
     streamMaxLen?: number;
     /**

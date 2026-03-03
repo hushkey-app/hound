@@ -11,6 +11,7 @@ Client for queue administration: list jobs, retry, cancel, pause queues. Use fro
 - **Get Queues** - List all queues
 - **Retry Job** - Retry a failed job
 - **Cancel Job** - Cancel a waiting/delayed job
+- **Promote Job** - Promote a delayed or waiting job to run now (manual "run now")
 
 ## Usage
 
@@ -84,11 +85,17 @@ const queues = await admin.queues();
 const queuesInfo = await admin.queuesInfo();
 ```
 
-### Retry / Cancel
+### Retry / Cancel / Promote
 
 ```typescript
 const retried = await admin.retryJob('job-id-123', 'default');
 const cancelled = await admin.cancelJob('job-id-123', 'default');
+
+// Promote a delayed or waiting job to run now (requires Remq — uses enqueueJobToStream)
+const promoted = await admin.promoteJob('job-id-123', 'default');
+if (promoted) {
+  console.log('Job promoted, processor will pick it up immediately');
+}
 ```
 
 ### Pause / Resume

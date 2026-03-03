@@ -6,15 +6,15 @@ Main modules for job processing with Redis Streams.
 
 ### Remq (`libs/job-manager/remq.ts`)
 
-| Method   | Signature                                                                 |
-| -------- | ------------------------------------------------------------------------- |
-| `create` | `static create<TApp>(options): Remq<TApp>`                                |
-| `on`     | `on(event, handler, options?): this` (sync, fluent)                       |
-| `emit`   | `emit(event, data?, options?): string` (returns job id; queue in options) |
+| Method      | Signature                                                                                   |
+| ----------- | ------------------------------------------------------------------------------------------- |
+| `create`    | `static create<TApp>(options): Remq<TApp>`                                                  |
+| `on`        | `on(event, handler, options?): this` (sync, fluent)                                         |
+| `emit`      | `emit(event, data?, options?): string` (returns job id; queue in options)                   |
 | `emitAsync` | `emitAsync(event, data?, options?): Promise<string>` (same as emit but awaits Redis writes) |
-| `start`  | `start(): Promise<void>`                                                  |
-| `stop`   | `stop(): Promise<void>`                                                   |
-| `drain`  | `drain(): Promise<void>` — wait for active tasks to finish                |
+| `start`     | `start(): Promise<void>`                                                                    |
+| `stop`      | `stop(): Promise<void>`                                                                     |
+| `drain`     | `drain(): Promise<void>` — wait for active tasks to finish                                  |
 
 ### Consumer (`libs/consumer/`)
 
@@ -62,12 +62,12 @@ Main modules for job processing with Redis Streams.
 
 ### Types
 
-| Type                                                                                                                  | Module                 |
-| --------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| `JobManagerOptions`, `JobHandler`, `JobContext`, `JobDefinition`, `defineJob`, `EmitFunction`, `EmitOptions`, `HandlerOptions`, `UpdateFunction` | `types/remq.ts` |
-| `ConsumerOptions`, `Message`, `MessageHandler`, `MessageContext`, `ConsumerEvents`                                    | `types/`               |
-| `ProcessorOptions`, `ProcessableMessage`, `RetryConfig`, `DLQConfig`, `DebounceConfig`                                | `types/processor.ts`   |
-| `Job`, `Job`, `ListOptions`, `QueueStats`, `QueueInfo`                                                                | `types/admin.ts`       |
+| Type                                                                                                                                             | Module               |
+| ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------- |
+| `JobManagerOptions`, `JobHandler`, `JobContext`, `JobDefinition`, `defineJob`, `EmitFunction`, `EmitOptions`, `HandlerOptions`, `UpdateFunction` | `types/remq.ts`      |
+| `ConsumerOptions`, `Message`, `MessageHandler`, `MessageContext`, `ConsumerEvents`                                                               | `types/`             |
+| `ProcessorOptions`, `ProcessableMessage`, `RetryConfig`, `DLQConfig`, `DebounceConfig`                                                           | `types/processor.ts` |
+| `Job`, `Job`, `ListOptions`, `QueueStats`, `QueueInfo`                                                                                           | `types/admin.ts`     |
 
 ---
 
@@ -198,11 +198,11 @@ These patterns can stress or crash a Redis container if left unbounded. Mitigate
 
 | Risk                                                | Cause                                                                                                                                                                             | Mitigation                                                                                                                                                                           |
 | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Unbounded stream growth / process memory blowup** | Queue streams grow with every emit/retry/cron; consumer reads in batches. Unbounded streams can cause Redis and process memory to spike (e.g. 130MB → 3GB).                       | **Set `processor.streamMaxLen`** (e.g. `10000`). XADD uses MAXLEN ~ at add time and XTRIM runs after each read+ACK. Lower `processor.readCount` if message payloads are large.       |
+| **Unbounded stream growth / process memory blowup** | Queue streams grow with every emit/retry/cron; consumer reads in batches. Unbounded streams can cause Redis and process memory to spike (e.g. 130MB → 3GB).                       | Consumer trims after ACK with **XTRIM MINID ~** (only ACKed entries removed; unprocessed jobs never dropped). Stream stays bounded by natural backlog. Lower `processor.readCount` if message payloads are large.       |
 | **Logs and job state keys never expire**            | Job state keys (waiting, delayed, processing, completed, failed) and logs in the job blob accumulate. (Per-entry log keys are no longer written; logs live only in the job blob.) | **Set `processor.jobStateTtlSeconds`** (e.g. `604800` for 7 days) so all job state keys expire. **Set `processor.maxLogsPerTask`** (e.g. `100`) to trim log entries inside the blob. |
 | **Redis server memory**                             | Redis can grow until OOM if no cap is set.                                                                                                                                        | Set `maxmemory` and `maxmemory-policy` (e.g. `allkeys-lru`) in Redis config or at runtime: `CONFIG SET maxmemory 512mb` and `CONFIG SET maxmemory-policy allkeys-lru`.               |
 
-**Recommended for production:** set `processor.maxLogsPerTask`, **`processor.streamMaxLen`**, **`processor.jobStateTtlSeconds`** (e.g. 7 days), use Redis `maxmemory` + eviction, and monitor stream lengths and key count.
+**Recommended for production:** set `processor.maxLogsPerTask`, **`processor.jobStateTtlSeconds`** (e.g. 7 days), use Redis `maxmemory` + eviction, and monitor stream lengths and key count. Stream trimming is automatic (MINID after ACK).
 
 **Quick wins (Redis server):** Cap memory and eviction so Redis does not OOM: `CONFIG SET maxmemory 512mb` and `CONFIG SET maxmemory-policy allkeys-lru`. Inspect key count: `DBSIZE`; key distribution: `SCAN` with pattern `queues:*` and `XLEN` on each `*-stream`.
 
@@ -223,11 +223,12 @@ const redisOption = {
 };
 
 const db = new Redis(redisOption);
-const streamdb = new Redis({ ...redisOption, db: 2 }); // optional: separate stream connection
 
+// Pass redis config so Remq auto-creates stream connection on db+1 (recommended).
+// If your main db is 15, Redis default max is 16 DBs (0–15); pass streamdb explicitly or increase "databases" in redis.conf.
 const tm = Remq.create({
   db,
-  streamdb,
+  redis: { host: 'localhost', port: 6379, db: 1 },
   ctx: {},
   concurrency: 2,
   processor: {
@@ -237,7 +238,7 @@ const tm = Remq.create({
       shouldSendToDLQ: (_, __, attempts) => attempts >= 3,
     },
     maxLogsPerTask: 100,
-    streamMaxLen: 10000, // cap stream at add time + trim after read
+    // stream trimming: after ACK with MINID (no streamMaxLen at emit)
     jobStateTtlSeconds: 604800, // 7 days; job state keys expire to prevent unbounded growth
   },
 });

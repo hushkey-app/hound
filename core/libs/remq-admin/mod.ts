@@ -167,6 +167,33 @@ export class RemqAdmin {
     return jobs.slice(offset, offset + limit);
   }
 
+  /**
+   * Promote a delayed or waiting job to run now.
+   * Updates delayUntil/lockUntil to now and re-enqueues to stream via Remq.enqueueJobToStream
+   * so the processor picks it up immediately. Requires Remq instance (enqueueJobToStream).
+   * Returns the promoted job or null if not found.
+   */
+  async promoteJob(jobId: string, queue: string): Promise<Job | null> {
+    const job = await this.getJob(jobId, queue);
+    if (!job) return null;
+    if (job.status !== 'delayed' && job.status !== 'waiting') {
+      throw new Error(
+        `Cannot promote job with status: ${job.status}. Only delayed or waiting jobs can be promoted.`,
+      );
+    }
+    if (!this.remq) {
+      throw new Error(
+        'RemqAdmin.promoteJob() requires a Remq instance to enqueue the job to the stream. Use new RemqAdmin(db, remq).',
+      );
+    }
+    const promoted = { ...job, delayUntil: Date.now(), lockUntil: Date.now() };
+    await this.db.set(
+      `queues:${queue}:${jobId}:${job.status}`,
+      JSON.stringify(promoted),
+    );
+    await this.remq.enqueueJobToStream(queue, promoted as Record<string, unknown>);
+    return promoted;
+  }
   // ─── Job Mutations ────────────────────────────────────────────────────────
 
   /**

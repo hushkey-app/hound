@@ -72,9 +72,7 @@ export interface ConsumerOptions {
   };
 
   /**
-   * Max stream length per queue stream. After each read+ACK, stream is trimmed (XTRIM MAXLEN ~).
-   * Prevents unbounded stream growth and memory blowup.
-   * @default undefined (no trim)
+   * @deprecated No longer used. Stream is trimmed after ACK with XTRIM MINID ~ (only ACKed entries; unprocessed jobs never dropped).
    */
   streamMaxLen?: number;
 }

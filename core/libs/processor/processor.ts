@@ -17,7 +17,6 @@ export class Processor {
   private readonly streamdb: RedisConnection;
   private readonly retryConfig: ProcessorOptions['retry'];
   private readonly dlqConfig: ProcessorOptions['dlq'];
-  private readonly streamMaxLen?: number;
   private readonly debounceManager?: DebounceManager;
   #debounceCleanupIntervalId?: ReturnType<typeof setInterval>;
 
@@ -25,7 +24,6 @@ export class Processor {
     this.streamdb = options.streamdb;
     this.retryConfig = options.retry;
     this.dlqConfig = options.dlq;
-    this.streamMaxLen = options.streamMaxLen;
 
     // Setup debounce if configured (DebounceManager expects seconds, not ms)
     if (options.debounce) {
@@ -159,21 +157,9 @@ export class Processor {
   }
 
   /**
-   * Add entry to stream with optional MAXLEN to cap stream size at add time.
+   * Add entry to stream. No MAXLEN at add time — consumer trims after ACK with MINID.
    */
   async #xadd(streamKey: string, dataJson: string): Promise<string | null> {
-    const maxLen = this.streamMaxLen;
-    if (typeof maxLen === 'number' && maxLen > 0) {
-      return await this.streamdb.xadd(
-        streamKey,
-        'MAXLEN',
-        '~',
-        maxLen,
-        '*',
-        'data',
-        dataJson,
-      );
-    }
     return await this.streamdb.xadd(streamKey, '*', 'data', dataJson);
   }
 

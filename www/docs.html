@@ -45,6 +45,7 @@
               <p class="menu-label">Getting started</p>
               <ul class="menu-list">
                 <li><a href="#overview">Overview</a></li>
+                <li><a href="#changelog-030">Changelog 0.30</a></li>
                 <li><a href="#install">Installation</a></li>
                 <li><a href="#quickstart">Quick start</a></li>
                 <li><a href="#define-job">defineJob</a></li>
@@ -83,7 +84,37 @@
 
             <section id="overview" class="mb-6">
               <h1 class="title is-1 has-text-white">Documentation</h1>
-              <p class="subtitle has-text-grey-light">remq is a Redis-backed job queue and scheduler for Deno. Type-safe jobs, full lifecycle (emit, process, retry, DLQ, cron), WebSocket updates, and ~733 jobs/sec full-stack throughput.</p>
+              <p class="subtitle has-text-grey-light">remq is a Redis-backed job queue and scheduler for Deno. Type-safe jobs, full lifecycle (emit, process, retry, DLQ, cron), WebSocket updates, and ~841 jobs/sec full-stack throughput (1.18ms latency).</p>
+            </section>
+
+            <section id="changelog-030" class="mb-6">
+              <h2 class="title is-2 has-text-white">Changelog — 0.30</h2>
+              <p class="subtitle has-text-grey-light">Performance, reliability, and architecture improvements.</p>
+              <div class="content">
+                <h3 class="title is-5 has-text-white">Performance</h3>
+                <ul class="has-text-grey-light">
+                  <li><strong>377 → 841 jobs/sec</strong> (+123%)</li>
+                  <li><strong>2.65ms → 1.18ms</strong> per job (−55%)</li>
+                  <li><strong>2 Redis round trips</strong> per job (was 6)</li>
+                </ul>
+                <h3 class="title is-5 has-text-white mt-4">Reliability</h3>
+                <ul class="has-text-grey-light">
+                  <li><strong>XGROUP SETID '0'</strong> — no missed jobs on restart</li>
+                  <li><strong>MINID trim</strong> — self-cleaning stream, no job loss, bounded memory</li>
+                  <li><strong>NX lock on cron reschedule</strong> — multi-instance safe</li>
+                  <li><strong>Cron survives handler failures</strong> — never goes dead</li>
+                  <li><strong>completed/failed skip guard</strong> — safe replay after restart</li>
+                  <li><strong>emitAsync</strong> — guaranteed delivery for critical jobs</li>
+                </ul>
+                <h3 class="title is-5 has-text-white mt-4">Architecture</h3>
+                <ul class="has-text-grey-light">
+                  <li><strong>db/streamdb separation</strong> — admin queries never blocked</li>
+                  <li><strong>Auto-create streamdb on db+1</strong> — one config line</li>
+                  <li><strong>Singleton throws on duplicate create()</strong></li>
+                  <li><strong>promoteJob</strong> via <code>enqueueJobToStream</code></li>
+                </ul>
+                <p class="mt-3 has-text-grey-light"><strong>vs BullMQ:</strong> 4× faster full lifecycle. <strong>vs Sidekiq:</strong> 2× faster.</p>
+              </div>
             </section>
 
             <section id="install" class="mb-6">

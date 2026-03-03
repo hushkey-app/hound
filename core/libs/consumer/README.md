@@ -10,7 +10,8 @@ The Consumer module is intentionally minimal and focused on core responsibilitie
 
 1. **Fetches messages from Redis Streams**
    - Reads new messages via `XREADGROUP`
-   - Claims stuck pending messages via `XAUTOCLAIM` (or `XPENDING` + `XCLAIM` fallback)
+   - **Startup:** if the consumer group already exists, `XGROUP SETID … 0` resets the read position so messages emitted before `start()` (or left from a previous run) are not skipped.
+   - Claims stuck pending messages via `XPENDING` + `XCLAIM` (idle > 30s); on startup, `recoverPending()` reclaims all PEL with min idle 0ms.
    - Supports multiple streams (multi-topic) with work-stealing
 
 2. **Runs handlers with concurrency control**
@@ -133,7 +134,7 @@ await consumer.waitForActiveJobs(); // Wait for in-flight messages
 
 ### Stream trimming and memory
 
-- **`streamMaxLen`**: When set (e.g. via TaskManager `processor.streamMaxLen`), the consumer trims the stream (XTRIM MAXLEN ~) after each read+ACK so the stream self-cleans. Prevents unbounded stream growth and process memory blowup.
+- **Trim after ACK (MINID)**: After each read+ACK the consumer trims the stream with `XTRIM MINID ~`: it keeps entries at or after the oldest pending (un-ACKed) message, or—if nothing is pending—trims up to the last ACKed message. No unprocessed jobs are ever dropped; the stream is bounded by natural backlog. One `xpending` per cycle is reused for both claim check and trim boundary.
 - **`read.count`**: Max messages per XREADGROUP batch (default 200). Lower this if message payloads are large to avoid process memory spikes.
 
 ## Integration with Higher Layers

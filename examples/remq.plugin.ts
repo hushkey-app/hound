@@ -30,10 +30,13 @@ const contextApp = {
   foo: 'bar',
 };
 
+// debug — remove after fix
+// console.log('[remq] db index:', (db as any).options?.db);
+// console.log('[remq] streamdb index:', (streamdb as any).options?.db);
 // Initialize Remq (singleton)
 const remq = Remq.create({
   db,
-  streamdb, // Optional: separate connection for streams
+  streamdb,
   ctx: contextApp,
   expose: 4000, // WebSocket port; clients can send header x-get-broadcast: true to receive all task updates
   concurrency: 10, // the number of messages to process concurrently uses workers steal process strategy
@@ -47,7 +50,7 @@ const remq = Remq.create({
     },
     pollIntervalMs: 1000, // let work accumulate between reads; then read + process with concurrency (default 3000)
     maxLogsPerJob: 100, // trim oldest logs; keeps Redis self-cleaning
-    streamMaxLen: 3000, // cap stream at add time + trim after read. Monitor: XLEN/MEMORY USAGE per stream if payloads are large
+    // stream trimmed after ACK (MINID); streamMaxLen accepted but unused
     jobStateTtlSeconds: 604800, // 7 days; job state keys expire. Admin/SDK queries must handle missing keys (SCAN/GET)
     // readCount: 50, // optional: lower if message payloads are large (default 200)
   },

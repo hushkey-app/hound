@@ -44,7 +44,7 @@
           <div class="column is-half">
             <p class="eyebrow has-text-weight-semibold is-uppercase" style="color: var(--muted); font-size: 0.85rem; letter-spacing: 0.1em;">Redis-backed job queue</p>
             <h1 class="title is-1 has-text-white">Jobs that scale.<br>Type-safe. Deno-native.</h1>
-            <p class="subtitle has-text-grey-light">Full lifecycle: emit, process, retry, DLQ, cron, WebSocket updates. No separate server. ~733 jobs/sec.</p>
+            <p class="subtitle has-text-grey-light">Full lifecycle: emit, process, retry, DLQ, cron, WebSocket updates. No separate server. ~841 jobs/sec.</p>
             <div class="buttons are-medium">
               <a class="button is-link" href="docs.html" style="background: var(--accent); color: var(--bg); border: none;">Get started</a>
               <a class="button is-outlined" href="https://github.com/mirairoad/remq" target="_blank" rel="noopener" style="border-color: var(--border); color: #e8e8e8;">GitHub</a>
@@ -82,16 +82,16 @@
   <!-- §03 Ticker -->
   <div class="ticker-wrap">
     <div class="ticker-track">
-      <span class="ticker-item">733 jobs/sec</span>
-      <span class="ticker-item">1.36ms avg latency</span>
+      <span class="ticker-item">841 jobs/sec</span>
+      <span class="ticker-item">1.18ms avg latency</span>
       <span class="ticker-item">10/10 concurrency</span>
       <span class="ticker-item">Redis Streams</span>
       <span class="ticker-item">Deno + Tokio</span>
       <span class="ticker-item">Full lifecycle</span>
       <span class="ticker-item">Cron + Retry + DLQ</span>
       <span class="ticker-item">WebSocket gateway</span>
-      <span class="ticker-item">733 jobs/sec</span>
-      <span class="ticker-item">1.36ms avg latency</span>
+      <span class="ticker-item">841 jobs/sec</span>
+      <span class="ticker-item">1.18ms avg latency</span>
       <span class="ticker-item">10/10 concurrency</span>
       <span class="ticker-item">Redis Streams</span>
       <span class="ticker-item">Deno + Tokio</span>
@@ -110,13 +110,13 @@
         <div class="column is-half">
           <div class="box">
             <p class="heading">Throughput (full lifecycle)</p>
-            <p class="title" style="color: var(--accent)">733 <span class="is-size-5 has-text-weight-normal">jobs/sec</span></p>
+            <p class="title" style="color: var(--accent)">841 <span class="is-size-5 has-text-weight-normal">jobs/sec</span></p>
           </div>
         </div>
         <div class="column is-half">
           <div class="box">
             <p class="heading">Engine overhead</p>
-            <p class="title" style="color: var(--accent)">1.36 <span class="is-size-5 has-text-weight-normal">ms</span></p>
+            <p class="title" style="color: var(--accent)">1.18 <span class="is-size-5 has-text-weight-normal">ms</span></p>
           </div>
         </div>
         <div class="column is-half">
@@ -138,25 +138,25 @@
           <div class="bar-row">
             <span class="bar-label">remq</span>
             <div class="bar-track"><div class="bar-fill remq" data-width="100"></div></div>
-            <span class="bar-value">733 jobs/sec</span>
+            <span class="bar-value">841 jobs/sec</span>
           </div>
           <div class="bar-row">
             <span class="bar-label">Sidekiq</span>
-            <div class="bar-track"><div class="bar-fill others" data-width="55"></div></div>
+            <div class="bar-track"><div class="bar-fill others" data-width="48"></div></div>
             <span class="bar-value">~400 jobs/sec</span>
           </div>
           <div class="bar-row">
             <span class="bar-label">BullMQ</span>
-            <div class="bar-track"><div class="bar-fill others" data-width="27"></div></div>
+            <div class="bar-track"><div class="bar-fill others" data-width="24"></div></div>
             <span class="bar-value">~200 jobs/sec</span>
           </div>
           <div class="bar-row">
             <span class="bar-label">Temporal</span>
-            <div class="bar-track"><div class="bar-fill others" data-width="20"></div></div>
+            <div class="bar-track"><div class="bar-fill others" data-width="18"></div></div>
             <span class="bar-value">~150 jobs/sec</span>
           </div>
         </div>
-        <p class="is-size-7 has-text-grey-light mt-3">* BullMQ measured with retries, DLQ, state tracking. Raw delivery numbers not comparable.</p>
+        <p class="is-size-7 has-text-grey-light mt-3">* Full lifecycle. remq 4× faster than BullMQ, 2× faster than Sidekiq. BullMQ/Sidekiq measured with retries, DLQ, state tracking.</p>
       </div>
     </div>
   </section>
@@ -249,14 +249,14 @@
             </tr>
             <tr>
               <td>Full lifecycle jobs/sec</td>
-              <td class="col-remq">~733</td>
+              <td class="col-remq">~841</td>
               <td>~200</td>
               <td>~400</td>
               <td>~150</td>
             </tr>
             <tr>
               <td>Engine overhead</td>
-              <td class="col-remq">1.36ms</td>
+              <td class="col-remq">1.18ms</td>
               <td>~5ms</td>
               <td>~2.5ms</td>
               <td>~7ms</td>

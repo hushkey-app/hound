@@ -17,6 +17,7 @@ benchmark.configure({
 remq.on(requestJob);
 remq.on(helloWorldJob);
 remq.on(byeWorldJob);
+
 await remq.start();
 
 benchmark.start();

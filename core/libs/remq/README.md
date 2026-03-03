@@ -25,9 +25,10 @@ const db = new Redis({
   db: 1,
 });
 
-// Initialize Remq
+// Initialize Remq (redis config auto-creates stream connection on db+1)
 const taskManager = Remq.create({
   db,
+  redis: { host: 'localhost', port: 6379, db: 1 },
   ctx: {}, // Your app context
   concurrency: 4,
   processor: {
@@ -90,6 +91,7 @@ interface AppContext {
 
 const taskManager = Remq.create<AppContext>({
   db: redisClient,
+  redis: { host: 'localhost', port: 6379, db: 1 }, // or pass streamdb for full control
   ctx: {
     db: myDatabase,
     cache: myCache,
@@ -115,10 +117,11 @@ Create the singleton Remq instance. **Throws** if called more than once; use `Re
 
 **Options:**
 
-- `db: RedisConnection` - Redis connection for job storage
+- `db: RedisConnection` - Redis connection for job storage (required)
 - `ctx?: T` - Context object passed to handlers
 - `concurrency?: number` - Number of concurrent jobs (default: 1)
-- `streamdb?: RedisConnection` - Optional separate Redis connection for streams
+- `streamdb?: RedisConnection` - Optional dedicated Redis connection for streams. If omitted, Remq falls back to reusing `db` but this can let XREADGROUP BLOCK stall admin queries; prefer providing a dedicated `streamdb` or `redis` config so Remq can auto-create one on db+1.
+- `redis?: RedisOptions` - Connection config to auto-create stream connection on db+1 (recommended when `streamdb` is not provided). Avoids XREADGROUP BLOCK stalling admin queries.
 - `processor?: { retry?, dlq?, debounce?, ignoreConfigErrors? }` - Processor options
 
 ### `on(eventOrDefinition, handler?, options?)`
@@ -150,25 +153,28 @@ Typed factory for job definitions. Zero runtime overhead. Use with `remq.on(jobD
 
 ```typescript
 // jobs/user.welcome.ts
-import { defineJob } from '@remq/core'
+import { defineJob } from '@remq/core';
 
 export default defineJob('user.welcome', async (ctx) => {
-  await ctx.mailer.send(ctx.data.email)
-}, { queue: 'emails', attempts: 3 })
+  await ctx.mailer.send(ctx.data.email);
+}, { queue: 'emails', attempts: 3 });
 
 // index.ts
-import userWelcome from './jobs/user.welcome.ts'
-remq.on(userWelcome).start()
+import userWelcome from './jobs/user.welcome.ts';
+remq.on(userWelcome).start();
 ```
 
 With typed data:
 
 ```typescript
-interface HostSyncData { hostId: string; region: 'jp' | 'au' }
+interface HostSyncData {
+  hostId: string;
+  region: 'jp' | 'au';
+}
 defineJob<AppCtx, HostSyncData>('host.sync', async (ctx) => {
   // ctx.data.hostId, ctx.data.region are typed
-  await ctx.services.hosts.sync(ctx.data.hostId, ctx.data.region)
-}, { queue: 'sync', repeat: { pattern: '0 * * * *' } })
+  await ctx.services.hosts.sync(ctx.data.hostId, ctx.data.region);
+}, { queue: 'sync', repeat: { pattern: '0 * * * *' } });
 ```
 
 ### `emit(event, data?, options?)`
@@ -239,7 +245,7 @@ Object shape returned by `defineJob()`: `{ event, handler, options? }`. Pass to 
 **Where used:**
 
 - Exposed as `Remq.emit()` and `Remq.emitAsync()`; injected onto handler context as `ctx.emit`
-- Cron bootstrap in `on()` stores pending cron jobs; on `start()` they are emitted only if no existing job state exists (dedup on restart)
+- Cron bootstrap in `on()` stores pending cron jobs; on `start()` they are emitted only if no existing job state exists (dedup on restart). When a cron job completes, the next tick is scheduled only if the current instance wins a Redis lock (`queues:{queue}:cron-lock:{jobName}`), so multiple instances (e.g. after XGROUP SETID '0') do not each requeue the same cron and cause multiple runs per tick.
 
 ### `HandlerOptions`
 
@@ -255,13 +261,15 @@ Options for `Remq.create()`.
 - `expose?: number` - Port to expose a job-manager API (default: `4000`)
 - `ctx?: T` - Context object passed to handlers
 - `concurrency?: number` - Number of concurrent jobs (default: `1`)
-- `streamdb?: RedisConnection` - Optional Redis connection for streams (defaults to `db`)
+- `streamdb?: RedisConnection` - Optional dedicated Redis connection for streams. If omitted, Remq falls back to reusing `db` but this can let XREADGROUP BLOCK stall admin queries; prefer providing a dedicated `streamdb` or `redis` config so Remq can auto-create one on db+1.
+- `redis?: RedisOptions` - Connection config to auto-create stream connection on db+1 (recommended when `streamdb` is not provided). Prevents XREADGROUP BLOCK from stalling admin queries.
 - `processor?: { retry?, dlq?, debounce?, ignoreConfigErrors? }` - Processor policy options
 
 **Defaults (applied in constructor):**
 
 - `concurrency` defaults to `1`
-- `streamdb` defaults to `db`
+- If `streamdb` and `redis` are both omitted, Remq reuses `db` for stream operations (backwards compatible) and logs a warning, since XREADGROUP BLOCK can stall admin queries.
+- When `redis` is used, stream connection is created on db index + 1. If that index is > 15, Remq logs a warning (Redis default is 16 DBs, 0–15)—increase `databases` in redis.conf or pass `streamdb` explicitly.
 - `processor` defaults to `{}` when omitted
 - `ctx` defaults to `{}` and is augmented with `emit`
 

@@ -16,9 +16,10 @@ const db = new Redis({
 // Define context for your app
 const contextApp = {};
 
-// Initialize Remq (simple API)
+// Initialize Remq (redis config auto-creates stream connection on db+1)
 const taskManager = Remq.create({
   db,
+  redis: { host: 'localhost', port: 6379, db: 1 },
   ctx: contextApp,
   concurrency: 4,
   processor: {
@@ -83,6 +84,7 @@ const db = new Redis({ port: 6379, host: 'localhost', db: 1 });
 
 const taskManager = Remq.create({
   db,
+  redis: { host: 'localhost', port: 6379, db: 1 },
   ctx: {},
   concurrency: 4,
 });

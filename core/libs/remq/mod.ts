@@ -6,6 +6,7 @@
 
 // export { Remq, SUBSCRIBE_Job_FINISHED } from './remq.ts';
 
+import { Redis } from 'ioredis';
 import { Processor } from '../processor/processor.ts';
 import { DebounceManager } from '../processor/debounce-manager.ts';
 import { createWsGateway } from '../gateways/ws.gateway.ts';
@@ -99,7 +100,41 @@ export class Remq<
 
   private constructor(options: JobManagerOptions<TApp>) {
     this.db = options.db;
-    this.streamdb = options.streamdb || options.db;
+    if (options.streamdb) {
+      this.streamdb = options.streamdb;
+    } else if (options.redis) {
+      // Auto-create dedicated stream connection on db+1.
+      // XREADGROUP BLOCK holds the connection for up to blockMs — if shared with
+      // db, all admin queries (SCAN, GET) queue behind the block. Separate
+      // connection prevents this entirely.
+      const streamDbIndex = (options.redis.db ?? 0) + 1;
+      if (streamDbIndex > 15) {
+        console.warn(
+          `[remq] stream connection on db ${streamDbIndex} — Redis default max is 15 (db 0-15). ` +
+            'Increase "databases" in redis.conf or pass streamdb explicitly.',
+        );
+      }
+      this.streamdb = new Redis({
+        ...options.redis,
+        db: streamDbIndex,
+        // stream connection never needs ready check — MKSTREAM handles missing keys
+        enableReadyCheck: false,
+        maxRetriesPerRequest: null,
+      });
+      console.log(
+        `[remq] stream connection auto-created on db ${streamDbIndex}`,
+      );
+    } else {
+      // Backwards-compatible fallback: reuse db connection for streams.
+      // This can cause XREADGROUP BLOCK to stall admin queries; prefer passing
+      // streamdb or redis so Remq can use a dedicated connection.
+      this.streamdb = this.db;
+      console.warn(
+        '[remq] streamdb/redis not provided; reusing db connection for stream operations. ' +
+          'This preserves backwards compatibility but XREADGROUP BLOCK can stall admin queries. ' +
+          'Pass streamdb (dedicated Redis connection) or redis (connection config) to avoid this.',
+      );
+    }
     this.concurrency = options.concurrency ?? 1;
     this.processorOptions = options.processor || {};
     this.debug = options.debug ?? false;
@@ -288,6 +323,20 @@ export class Remq<
     return jobId;
   }
 
+  /**
+   * Enqueue an existing job payload to the queue stream (no state write).
+   * Used by RemqAdmin.promoteJob to push a promoted job so the processor picks it up immediately.
+   */
+  async enqueueJobToStream(
+    queue: string,
+    jobPayload: Record<string, unknown>,
+  ): Promise<void> {
+    await this.#xadd(
+      `${queue}-stream`,
+      JSON.stringify(jobPayload),
+    );
+  }
+
   /** Internal: use RemqAdmin.onJobFinished() for public API. Keyed by symbol so not in public surface. */
   [SUBSCRIBE_JOB_FINISHED](
     cb: (payload: {
@@ -317,21 +366,10 @@ export class Remq<
   }
 
   /**
-   * Add entry to stream with optional MAXLEN to cap stream size at add time.
+   * Add entry to stream. No MAXLEN at emit time — trimming is done after ACK
+   * in the consumer using MINID so we never drop unprocessed jobs.
    */
   async #xadd(streamKey: string, dataJson: string): Promise<string | null> {
-    const maxLen = this.processorOptions?.streamMaxLen;
-    if (typeof maxLen === 'number' && maxLen > 0) {
-      return await this.streamdb.xadd(
-        streamKey,
-        'MAXLEN',
-        '~',
-        maxLen,
-        '*',
-        'data',
-        dataJson,
-      );
-    }
     return await this.streamdb.xadd(streamKey, '*', 'data', dataJson);
   }
 
@@ -362,6 +400,43 @@ export class Remq<
     ) return;
     const excess = jobEntry.logs.length - maxLogsPerJob;
     jobEntry.logs.splice(0, excess);
+  }
+
+  /**
+   * Schedule the next cron tick (success or failure). Uses Redis lock so only one instance schedules.
+   */
+  async #scheduleCronNextTick(
+    jobEntry: Record<string, unknown>,
+    queueName: string,
+  ): Promise<void> {
+    const state = jobEntry?.state as {
+      name?: string;
+      options?: { repeat?: { pattern?: string } };
+    } | undefined;
+    const pattern = state?.options?.repeat?.pattern;
+    if (!jobEntry.repeatCount || !pattern) return;
+    const cron = parseCronExpression(pattern);
+    const nextRun = cron.getNextDate(new Date()).getTime();
+    const lockKey = `queues:${queueName}:cron-lock:${state?.name ?? ''}`;
+    const lockTtl = Math.max(
+      1,
+      Math.ceil((nextRun - Date.now() + 10000) / 1000),
+    );
+    const locked = await this.db.set(lockKey, '1', 'EX', lockTtl, 'NX');
+    if (locked) {
+      await this.#xadd(
+        `${queueName}-stream`,
+        JSON.stringify({
+          ...jobEntry,
+          lockUntil: nextRun,
+          delayUntil: nextRun,
+          repeatCount: jobEntry.repeatCount,
+          timestamp: Date.now(),
+          status: 'delayed',
+          lastRun: Date.now(),
+        }),
+      );
+    }
   }
 
   /**
@@ -703,7 +778,17 @@ export class Remq<
       }
       if (jobStatusData) {
         try {
-          const parsedJob = JSON.parse(jobStatusData) as any;
+          const parsedJob = JSON.parse(jobStatusData) as {
+            status?: string;
+            paused?: boolean;
+          };
+          // Skip already-completed/failed jobs that reappear after SETID '0' reset
+          if (
+            parsedJob.status === 'completed' || parsedJob.status === 'failed'
+          ) {
+            await ctx.ack();
+            return;
+          }
           if (parsedJob.paused === true) {
             // Job is paused - skip processing (don't ACK, let it be reclaimed)
             return;
@@ -768,7 +853,6 @@ export class Remq<
         handler: unifiedMessageHandler,
         concurrency: this.concurrency,
         group: 'processor',
-        streamMaxLen: this.processorOptions?.streamMaxLen,
         pollIntervalMs: this.processorOptions?.pollIntervalMs,
         read: {
           count: this.processorOptions?.read?.count ??
@@ -928,25 +1012,7 @@ export class Remq<
 
       this.#notifyJobFinished({ jobId, queue: queueName, status: 'completed' });
 
-      // Cron reschedule — xadd only, no state key written (stream entry is the schedule)
-      if (
-        jobEntry.repeatCount > 0 && jobEntry?.state?.options?.repeat?.pattern
-      ) {
-        const cron = parseCronExpression(jobEntry.state.options.repeat.pattern);
-        const nextRun = cron.getNextDate(new Date()).getTime();
-        await this.#xadd(
-          `${queueName}-stream`,
-          JSON.stringify({
-            ...jobEntry,
-            lockUntil: nextRun,
-            delayUntil: nextRun,
-            repeatCount: jobEntry.repeatCount,
-            timestamp: Date.now(),
-            status: 'delayed',
-            lastRun: Date.now(),
-          }),
-        );
-      }
+      await this.#scheduleCronNextTick(jobEntry, queueName);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error
         ? error.message
@@ -1018,6 +1084,9 @@ export class Remq<
         await this.#xadd(`${queueName}-stream`, JSON.stringify(retryJob));
       }
 
+      // Reschedule cron next tick regardless of failure so the cron is not dead
+      await this.#scheduleCronNextTick(jobEntry, queueName);
+
       throw error; // Re-throw so Processor can handle
     }
   }
@@ -1075,6 +1144,8 @@ export class Remq<
     } catch (error: unknown) {
       const err = error as { message?: string };
       if (err?.message?.includes('BUSYGROUP')) {
+        // Reset last-delivered-id so jobs emitted before start() are not skipped
+        await this.streamdb.xgroup('SETID', streamKey, 'processor', '0');
         return;
       }
       throw error;

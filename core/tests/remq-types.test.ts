@@ -6,7 +6,7 @@ Deno.test('Remq applies documented defaults and on() queue default', () => {
   RemqAny.instance = undefined;
 
   const fakeRedis = {} as unknown as RedisConnection;
-  const manager = Remq.create({ db: fakeRedis });
+  const manager = Remq.create({ db: fakeRedis, streamdb: fakeRedis });
   const internal = manager as unknown as {
     concurrency: number;
     streamdb: unknown;
@@ -23,7 +23,7 @@ Deno.test('Remq applies documented defaults and on() queue default', () => {
   }
 
   if (internal.streamdb !== fakeRedis) {
-    throw new Error('Expected streamdb to default to db');
+    throw new Error('Expected streamdb to be the provided connection');
   }
 
   if (typeof internal.ctx?.emit !== 'function') {
