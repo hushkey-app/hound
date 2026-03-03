@@ -111,7 +111,7 @@ taskManager.on('process-user', async (ctx) => {
 
 ### `Remq.create(options)`
 
-Create or retrieve the singleton Remq instance.
+Create the singleton Remq instance. **Throws** if called more than once; use `Remq.getInstance()` to get the existing instance. For tests, use `Remq._reset()` to clear the singleton before creating again.
 
 **Options:**
 
@@ -173,7 +173,11 @@ defineJob<AppCtx, HostSyncData>('host.sync', async (ctx) => {
 
 ### `emit(event, data?, options?)`
 
-Emit/trigger a job/event. Returns job id.
+Emit/trigger a job/event. Returns job id. Fire-and-forget: Redis writes are not awaited.
+
+### `emitAsync(event, data?, options?)`
+
+Like `emit()` but returns `Promise<string>`. Use when you need to wait for Redis writes to complete before continuing (e.g. before shutting down or for tests).
 
 **Parameters:**
 
@@ -234,8 +238,8 @@ Object shape returned by `defineJob()`: `{ event, handler, options? }`. Pass to 
 
 **Where used:**
 
-- Exposed as `Remq.emit()` and injected onto handler context as `ctx.emit`
-- Cron bootstrap in `on()` uses fire-and-forget `emit(event, {}, { queue, repeat, attempts })`
+- Exposed as `Remq.emit()` and `Remq.emitAsync()`; injected onto handler context as `ctx.emit`
+- Cron bootstrap in `on()` stores pending cron jobs; on `start()` they are emitted only if no existing job state exists (dedup on restart)
 
 ### `HandlerOptions`
 

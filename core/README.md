@@ -11,6 +11,7 @@ Main modules for job processing with Redis Streams.
 | `create` | `static create<TApp>(options): Remq<TApp>`                                |
 | `on`     | `on(event, handler, options?): this` (sync, fluent)                       |
 | `emit`   | `emit(event, data?, options?): string` (returns job id; queue in options) |
+| `emitAsync` | `emitAsync(event, data?, options?): Promise<string>` (same as emit but awaits Redis writes) |
 | `start`  | `start(): Promise<void>`                                                  |
 | `stop`   | `stop(): Promise<void>`                                                   |
 | `drain`  | `drain(): Promise<void>` — wait for active tasks to finish                |

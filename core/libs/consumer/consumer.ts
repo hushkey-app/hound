@@ -109,60 +109,46 @@ export class Consumer extends EventTarget {
 
     try {
       while (true) {
-        // Check abort signal (like old worker line 237-239)
-        if (signal?.aborted || controller.signal.aborted) {
-          break;
-        }
+        if (signal?.aborted || controller.signal.aborted) break;
 
         try {
-          // Read messages from all streams (work-stealing approach like old worker line 271-280)
-          let messages: Message[] = [];
+          // FIX 6: read ALL streams into buffer — no break on first hit.
+          // Previously broke after the first stream with messages, leaving
+          // other queues unread and workers starved between poll cycles.
+          const messages: Message[] = [];
 
           for (const streamKey of this.streams) {
-            // Extract queue name from stream key (e.g., "default-stream" -> "default")
             const queueName = streamKey.replace('-stream', '');
             const queueMessages = await this.streamReader.readQueueStream(
               queueName,
             );
             messages.push(...queueMessages);
-
-            // If we got messages, break to process them (work-stealing)
-            if (queueMessages.length > 0) {
-              break;
-            }
+            // no break — drain every stream before dispatching
           }
 
           if (messages.length === 0) {
-            // Use delay utility like old worker
             await this.delay(this.pollIntervalMs);
             continue;
           }
 
-          // Successfully read from Redis – reset backoff
           this.#consecutiveRedisErrors = 0;
 
-          // Process messages (like old worker line 293-340)
           for (const message of messages) {
-            // Check abort signal
-            if (signal?.aborted || controller.signal.aborted) {
-              return;
-            }
+            if (signal?.aborted || controller.signal.aborted) return;
 
-            // Wait if we've hit concurrency limit (like old worker line 153-163)
+            // FIX 6: tight spin when at concurrency limit — 50ms instead of
+            // pollIntervalMs (3000ms). Workers were stalling up to 3 seconds
+            // waiting for a slot to open even with a full message buffer.
             while (
               this.#activeJobs.size >= this.concurrencyPool.maxConcurrency
             ) {
               await Promise.race([
                 Promise.race(this.#activeJobs),
-                this.delay(this.pollIntervalMs),
+                this.delay(50),
               ]);
-
-              if (signal?.aborted || controller.signal.aborted) {
-                return;
-              }
+              if (signal?.aborted || controller.signal.aborted) return;
             }
 
-            // Create a promise for this message's processing (like old worker line 212-225)
             const taskPromise = (async () => {
               try {
                 await this.#processMessage(message);
@@ -171,13 +157,8 @@ export class Consumer extends EventTarget {
               }
             })();
 
-            // Track the active job (like old worker line 224)
             this.#activeJobs.add(taskPromise);
-
-            // Remove from tracking when done
-            taskPromise.finally(() => {
-              this.#activeJobs.delete(taskPromise);
-            });
+            taskPromise.finally(() => this.#activeJobs.delete(taskPromise));
           }
         } catch (error) {
           console.error('Error in processing loop:', error);

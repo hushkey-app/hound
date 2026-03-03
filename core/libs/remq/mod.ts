@@ -57,6 +57,15 @@ export class Remq<
 
   private handlers: Map<string, JobHandler<TApp, any>> = new Map();
   private handlerDebounce: Map<string, DebounceManager> = new Map(); // handlerKey -> DebounceManager
+  private pendingCronJobs: Map<
+    string,
+    {
+      event: string;
+      queue: string;
+      repeat: { pattern: string };
+      attempts?: number;
+    }
+  > = new Map();
   private processor?: Processor;
   private queueStreams: Set<string> = new Set();
   private isStarted = false;
@@ -105,10 +114,18 @@ export class Remq<
   static create<TApp extends Record<string, unknown> = Record<string, unknown>>(
     options: JobManagerOptions<TApp>,
   ): Remq<TApp> {
-    if (!Remq.instance) {
-      Remq.instance = new Remq(options);
+    if (Remq.instance) {
+      throw new Error(
+        '[remq] Remq.create() called more than once. Use Remq.getInstance().',
+      );
     }
+    Remq.instance = new Remq(options);
     return Remq.instance as Remq<TApp>;
+  }
+
+  /** Reset singleton for tests. Not part of public API. */
+  static _reset(): void {
+    Remq.instance = undefined as any;
   }
 
   static getInstance<
@@ -165,9 +182,9 @@ export class Remq<
       this.handlerDebounce.set(handlerKey, debounceManager);
     }
 
-    // Cron bootstrap: fire-and-forget (no await)
     if (opts?.repeat?.pattern) {
-      this.emit(event, {}, {
+      this.pendingCronJobs.set(handlerKey, {
+        event,
         queue,
         repeat: { pattern: opts.repeat.pattern },
         attempts: opts.attempts,
@@ -177,9 +194,14 @@ export class Remq<
   }
 
   /**
-   * Emit/trigger a job/event. Returns the job id so callers can track completion.
+   * Build job payload and optionally write to Redis. Returns [jobId, streamKey, stateKey, dataJson].
    */
-  emit(event: string, data?: unknown, options?: EmitOptions): string {
+  #buildAndWrite(
+    event: string,
+    data?: unknown,
+    options?: EmitOptions,
+    dryRun = false,
+  ): [string, string, string, string] {
     const opts = options ?? {};
     const queue = opts.queue ?? 'default';
     const payload = data ?? {};
@@ -223,16 +245,46 @@ export class Remq<
     };
 
     const streamKey = `${queue}-stream`;
-    this.#xadd(streamKey, JSON.stringify(jobData)).catch((err: unknown) => {
-      console.error(`Error emitting job to queue ${queue}:`, err);
-    });
-
     const stateKey = `queues:${queue}:${jobId}:${jobData.status}`;
-    this.#setJobState(stateKey, JSON.stringify(jobData)).catch(
-      (err: unknown) => {
+    const dataJson = JSON.stringify(jobData);
+
+    if (!dryRun) {
+      this.#xadd(streamKey, dataJson).catch((err: unknown) => {
+        console.error(`Error emitting job to queue ${queue}:`, err);
+      });
+      this.#setJobState(stateKey, dataJson).catch((err: unknown) => {
         console.error(`Error storing job state:`, err);
-      },
+      });
+    }
+    return [jobId, streamKey, stateKey, dataJson];
+  }
+
+  /**
+   * Emit/trigger a job/event. Returns the job id so callers can track completion.
+   */
+  emit(event: string, data?: unknown, options?: EmitOptions): string {
+    const [jobId] = this.#buildAndWrite(event, data, options);
+    return jobId;
+  }
+
+  /**
+   * Like emit() but waits for Redis writes to complete. Returns the job id.
+   */
+  async emitAsync(
+    event: string,
+    data?: unknown,
+    options?: EmitOptions,
+  ): Promise<string> {
+    const [jobId, streamKey, stateKey, dataJson] = this.#buildAndWrite(
+      event,
+      data,
+      options,
+      true,
     );
+    await Promise.all([
+      this.#xadd(streamKey, dataJson),
+      this.#setJobState(stateKey, dataJson),
+    ]);
     return jobId;
   }
 
@@ -448,6 +500,19 @@ export class Remq<
       await this.drain();
     }
 
+    // Cron dedup on restart: only emit if no existing job state for that cron
+    for (const [, { event, queue, repeat, attempts }] of this.pendingCronJobs) {
+      const jobId = genJobIdSync(event, {});
+      const pipe = this.db.pipeline();
+      ['waiting', 'delayed', 'processing'].forEach((s) =>
+        pipe.exists(`queues:${queue}:${jobId}:${s}`)
+      );
+      const results = await pipe.exec() as [Error | null, number][];
+      if (!results.some(([, exists]) => exists === 1)) {
+        this.emit(event, {}, { queue, repeat, attempts });
+      }
+    }
+
     // Always recreate processor to include all currently registered handlers/queues
     // This ensures all registered streams are included (like old defaultWorker)
     this.createUnifiedProcessor();
@@ -617,28 +682,25 @@ export class Remq<
         throw new Error('Invalid job data: missing state.name or state.queue');
       }
 
-      const state = jobData.state;
-      const stateAny = state as any;
-
-      const queueName = state.queue || 'default';
-      const jobName = state.name!;
+      const queueName = jobData.state.queue || 'default';
+      const jobName = jobData.state.name!;
       const handlerKey = `${queueName}:${jobName}`;
       const jobId = jobData.id || processableMessage.id;
 
-      // Check if queue is paused (like old worker line 250-265)
-      const pausedKey = `queues:${queueName}:paused`;
-      const isPaused = await this.db.get(pausedKey);
+      // Check if queue is paused and job status in one pipeline (like old worker line 250-265, 305-309)
+      const pipe = this.db.pipeline();
+      pipe.get(`queues:${queueName}:paused`);
+      pipe.get(
+        `queues:${queueName}:${jobId}:${jobData.status || 'waiting'}`,
+      );
+      const [[, isPaused], [, jobStatusData]] = (await pipe.exec()) as [
+        [Error | null, string | null],
+        [Error | null, string | null],
+      ];
       if (isPaused === 'true') {
         // Queue is paused - skip processing (don't ACK, let it be reclaimed)
         return;
       }
-
-      // Check if individual job is paused (like old worker line 305-309)
-      // Get current job data to check paused flag
-      const jobStatusKey = `queues:${queueName}:${jobId}:${
-        jobData.status || 'waiting'
-      }`;
-      const jobStatusData = await this.db.get(jobStatusKey);
       if (jobStatusData) {
         try {
           const parsedJob = JSON.parse(jobStatusData) as any;
@@ -691,22 +753,11 @@ export class Remq<
           jobData,
           jobId,
           queueName,
-          state,
-          stateAny,
           wrappedHandler,
-          processableMessage,
         );
       } else {
         // Process job (copied from old worker #processJob line 355-586)
-        await this.processJob(
-          jobData,
-          jobId,
-          queueName,
-          state,
-          stateAny,
-          handler,
-          processableMessage,
-        );
+        await this.processJob(jobData, jobId, queueName, handler);
       }
     };
 
@@ -770,10 +821,7 @@ export class Remq<
     jobEntry: any,
     jobId: string,
     queueName: string,
-    state: any,
-    stateAny: any,
     handler: JobHandler<TApp, any>,
-    processableMessage: ProcessableMessage,
   ): Promise<void> {
     const maxLogsPerJob = this.processorOptions?.maxLogsPerJob;
 
@@ -837,15 +885,19 @@ export class Remq<
       const ctx = {
         ...this.ctx,
         id: jobId,
-        name: state.name!,
-        queue: state.queue!,
+        name: jobEntry.state.name!,
+        queue: jobEntry.state.queue!,
         status: 'processing',
         retryCount: jobEntry.retryCount ?? 0,
         retriedAttempts: jobEntry.retriedAttempts ?? 0,
-        data: state.data,
+        data: jobEntry.state.data,
         logger: jobEntry.logger,
         emit: this.emit.bind(this),
-        socket: this.#createSocketContext(jobId, state.name!, state.queue!),
+        socket: this.#createSocketContext(
+          jobId,
+          jobEntry.state.name!,
+          jobEntry.state.queue!,
+        ),
       };
 
       // Execute handler — all async work happens here
@@ -938,7 +990,7 @@ export class Remq<
         // Will retry — notify WS of this attempt's failure
         this.sendJobRetry({
           id: jobEntry.id,
-          event: state.name!,
+          event: jobEntry.state.name!,
           queue: queueName,
           error: errorMessage,
           retryCount: jobEntry.retryCount - 1,
