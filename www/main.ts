@@ -48,9 +48,12 @@ async function readFile(path: string): Promise<Uint8Array> {
 const BASE_PATH = (Deno.env.get("BASE_PATH") ?? "").replace(/\/$/, "") || "";
 
 function injectVersion(html: string): string {
-  return html
+  let out = html
     .replaceAll("{{REMQ_VERSION}}", REMQ_VERSION)
     .replaceAll("{{BASE_PATH}}", BASE_PATH);
+  // Collapse double slashes in paths (avoid /remq//#features) but keep https://
+  out = out.replace(/([^:])\/\/+/g, "$1/");
+  return out;
 }
 
 const site = new Hono();
