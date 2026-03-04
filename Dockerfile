@@ -8,6 +8,6 @@ WORKDIR /app
 
 COPY www/ .
 
-RUN deno cache --reload main.ts
+# RUN deno cache --reload --unstable-raw-imports main.ts
 
 CMD ["deno", "task", "serve"]
