@@ -130,7 +130,10 @@ app.get("/assets/*", async (c: Context) => {
   }
 });
 
-app.all("*", (c: Context) => c.notFound());
+app.all("*", (c: Context) => {
+  console.error(c.req);
+  return c.notFound();
+});
 
 const port = Number(Deno.env.get("PORT")) || 8080;
 console.log(`Serving www at http://localhost:${port}`);
