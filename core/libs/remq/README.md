@@ -183,7 +183,7 @@ Emit/trigger a job/event. Returns job id. Fire-and-forget: Redis writes are not 
 
 ### `emitAsync(event, data?, options?)`
 
-Like `emit()` but returns `Promise<string>`. Use when you need to wait for Redis writes to complete before continuing (e.g. before shutting down or for tests).
+Like `emit()` but returns `Promise<string>`. Use when you need to wait for the job to be queued before continuing (e.g. before shutting down or for tests). The stream write is awaited and guaranteed — if it fails, the promise rejects and the caller can retry. The state key (used for admin tracking) is written after the stream; if that write fails, the job still runs and a warning is logged (authoritative state is written during processing).
 
 **Parameters:**
 

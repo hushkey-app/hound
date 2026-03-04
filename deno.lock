@@ -1146,6 +1146,11 @@
           "jsr:@p4sca1/cron-schedule@^5.0.3",
           "npm:ioredis@^5.5.0"
         ]
+      },
+      "www": {
+        "dependencies": [
+          "jsr:@std/assert@1"
+        ]
       }
     }
   }

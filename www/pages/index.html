@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>remq — Redis-backed job queue for Deno</title>
+    <link rel="icon" href="public/favicon.ico">
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css"
+    >
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <!-- §01 Navbar -->
+    <nav
+      class="navbar is-fixed-top"
+      role="navigation"
+      aria-label="main navigation"
+    >
+      <div class="navbar-brand">
+        <!-- remove hover effect -->
+        <span class="navbar-item" style="pointer-events: none">
+          <img id="site-logo" src="/assets/img/logo.svg" alt="remq">
+        </span>
+
+        <a
+          role="button"
+          class="navbar-burger"
+          aria-label="menu"
+          aria-expanded="false"
+          data-target="navMenu"
+        >
+          <span aria-hidden="true"></span>
+          <span aria-hidden="true"></span>
+          <span aria-hidden="true"></span>
+        </a>
+      </div>
+      <div id="navMenu" class="navbar-menu">
+        <div class="navbar-end">
+          <a class="navbar-item" href="index.html#benchmarks">Benchmarks</a>
+          <a class="navbar-item" href="index.html#features">Features</a>
+          <a class="navbar-item" href="docs.html">Docs</a>
+          <a
+            class="navbar-item"
+            href="https://github.com/mirairoad/remq"
+            target="_blank"
+            rel="noopener"
+          >GitHub</a>
+          <span class="navbar-item">
+            <span class="version-badge">{{REMQ_VERSION}}</span>
+          </span>
+        </div>
+      </div>
+    </nav>
+
+    <!-- §02 Hero -->
+    <section class="hero is-fullheight-with-navbar">
+      <div class="hero-body">
+        <div class="container">
+          <div class="columns is-vcentered">
+            <div class="column is-half">
+              <p
+                class="eyebrow has-text-weight-semibold is-uppercase"
+                style="color: var(--muted); font-size: 0.85rem; letter-spacing: 0.1em"
+              >
+                Redis-backed job queue
+              </p>
+              <h1 class="title is-1 has-text-white">
+                Jobs that scale.<br>Type-safe. Deno-native.
+              </h1>
+              <p class="subtitle has-text-grey-light">
+                Full lifecycle: emit, process, retry, DLQ, cron, WebSocket
+                updates. No separate server. ~841 jobs/sec.
+              </p>
+              <div class="buttons are-medium">
+                <a
+                  class="button is-link"
+                  href="docs.html"
+                  style="background: var(--accent); color: var(--bg); border: none"
+                >Get started</a>
+                <a
+                  class="button is-outlined"
+                  href="https://github.com/mirairoad/remq"
+                  target="_blank"
+                  rel="noopener"
+                  style="border-color: var(--border)"
+                >GitHub</a>
+                <a
+                  class="button is-outlined"
+                  href="https://jsr.io/@hushkey/remq"
+                  target="_blank"
+                  rel="noopener"
+                  style="border-color: var(--border)"
+                >JSR registry</a>
+              </div>
+            </div>
+            <div class="column is-half">
+              <div class="code-block">
+                <div class="code-header">
+                  <span class="dots"><span class="dot red"></span><span
+                      class="dot yellow"
+                    ></span><span class="dot green"></span></span>
+                  <span>jobs/host.sync.ts</span>
+                </div>
+                <pre>
+<code><span class="tok-k">import</span> <span class="tok-n">{ defineJob }</span> <span class="tok-k">from</span> <span class="tok-s">'jsr:@hushkey/remq'</span><span class="tok-n">;</span>
+<span class="tok-k">export const</span> <span class="tok-n">hostSync</span> <span class="tok-k">=</span> <span class="tok-fn">defineJob</span><span class="tok-n">(</span><span class="tok-s">'host.sync'</span><span class="tok-n">,</span> <span class="tok-k">async</span> <span class="tok-n">(ctx)</span> <span class="tok-k">=&gt;</span> <span class="tok-n">{</span>
+  <span class="tok-n">await ctx</span><span class="tok-n">.</span><span class="tok-fn">logger</span><span class="tok-n">(</span><span class="tok-s">'Syncing '</span> <span class="tok-k">+</span> <span class="tok-n">ctx</span><span class="tok-n">.</span><span class="tok-n">data</span><span class="tok-n">.</span><span class="tok-n">hostId</span><span class="tok-n">);</span>
+<span class="tok-n">});</span></code></pre>
+              </div>
+              <div class="code-block">
+                <div class="code-header">
+                  <span class="dots"><span class="dot red"></span><span
+                      class="dot yellow"
+                    ></span><span class="dot green"></span></span>
+                  <span>main.ts</span>
+                </div>
+                <pre>
+<code><span class="tok-k">import</span> <span class="tok-n">{ Remq }</span> <span class="tok-k">from</span> <span class="tok-s">'jsr:@hushkey/remq'</span><span class="tok-n">;</span>
+<span class="tok-k">import</span> <span class="tok-n">{ hostSync }</span> <span class="tok-k">from</span> <span class="tok-s">'./jobs/host.sync.ts'</span><span class="tok-n">;</span>
+<span class="tok-k">const</span> <span class="tok-n">remq</span> <span class="tok-k">=</span> <span class="tok-fn">Remq.create</span><span class="tok-n">({ db, streamdb, expose: 4000 });</span>
+<span class="tok-n">remq</span><span class="tok-n">.</span><span class="tok-fn">on</span><span class="tok-n">(hostSync).start();</span>
+<span class="tok-n">remq</span><span class="tok-n">.</span><span class="tok-fn">emit</span><span class="tok-n">(</span><span class="tok-s">'host.sync'</span><span class="tok-n">,</span> <span class="tok-n">{ hostId: </span><span class="tok-s">'abc'</span> <span class="tok-n">});</span></code></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- §03 Ticker -->
+    <div class="ticker-wrap">
+      <div class="ticker-track">
+        <span class="ticker-item">841 jobs/sec</span>
+        <span class="ticker-item">1.18ms avg latency</span>
+        <span class="ticker-item">10/10 concurrency</span>
+        <span class="ticker-item">Redis Streams</span>
+        <span class="ticker-item">Deno + Tokio</span>
+        <span class="ticker-item">Full lifecycle</span>
+        <span class="ticker-item">Cron + Retry + DLQ</span>
+        <span class="ticker-item">WebSocket gateway</span>
+        <span class="ticker-item">841 jobs/sec</span>
+        <span class="ticker-item">1.18ms avg latency</span>
+        <span class="ticker-item">10/10 concurrency</span>
+        <span class="ticker-item">Redis Streams</span>
+        <span class="ticker-item">Deno + Tokio</span>
+        <span class="ticker-item">Full lifecycle</span>
+        <span class="ticker-item">Cron + Retry + DLQ</span>
+        <span class="ticker-item">WebSocket gateway</span>
+      </div>
+    </div>
+
+    <!-- §04 Benchmarks -->
+    <section class="section" id="benchmarks">
+      <div class="container">
+        <h2 class="title is-2 has-text-white anim">Benchmarks</h2>
+        <p class="subtitle has-text-grey-light anim mb-4">
+          Full lifecycle (emit → process → state → retry/DLQ). Pick a scenario:
+        </p>
+
+        <!-- Tabs -->
+        <div class="tabs is-boxed anim mb-0" role="tablist">
+          <ul>
+            <li class="is-active" data-tab="single"><a>Single</a></li>
+            <li data-tab="async"><a>Async</a></li>
+            <li data-tab="cluster"><a>3× Cluster</a></li>
+          </ul>
+        </div>
+
+        <!-- Tab 1 — Single Instance -->
+        <div class="benchmark-tab anim" id="tab-single" role="tabpanel">
+          <div class="box mt-0">
+            <p class="heading mb-2">Single instance</p>
+            <p class="has-text-grey-light is-size-7 mb-2">
+              Hardware: MacBook Pro M1 Pro (10-core, 16GB) · Redis: OSS 7
+              (Docker) · Concurrency: 10 workers
+            </p>
+            <div class="columns is-mobile is-multiline">
+              <div class="column is-half">
+                <strong>Throughput:</strong> <span style="color: var(--accent)"
+                >841 jobs/sec</span>
+              </div>
+              <div class="column is-half">
+                <strong>Latency:</strong> <span style="color: var(--accent)"
+                >1.18ms</span> avg
+              </div>
+              <div class="column is-half">
+                <strong>Round trips:</strong> 2 Redis ops/job
+              </div>
+              <div class="column is-full mt-2">
+                <span class="has-text-grey-light is-size-7"
+                >Full lifecycle: emit → queue → process → complete → trim</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 2 — Async (emitAsync) -->
+        <div class="benchmark-tab anim" id="tab-async" role="tabpanel" hidden>
+          <div class="box mt-0">
+            <p class="heading mb-2">Async (emitAsync)</p>
+            <p class="has-text-grey-light is-size-7 mb-2">
+              Hardware: MacBook Pro M1 Pro (10-core, 16GB) · Redis: OSS 7
+              (Docker) · Concurrency: 10 workers
+            </p>
+            <div class="columns is-mobile is-multiline">
+              <div class="column is-half">
+                <strong>Throughput:</strong> <span style="color: var(--accent)"
+                >~800 jobs/sec</span>
+              </div>
+              <div class="column is-half">
+                <strong>Latency:</strong> <span style="color: var(--accent)"
+                >1.2ms</span> avg
+              </div>
+              <div class="column is-full">
+                <strong>Guarantee:</strong> Write confirmed before return
+              </div>
+              <div class="column is-full">
+                <strong>Use for:</strong> payments, invoices, emails
+              </div>
+              <div class="column is-full">
+                <span class="has-text-grey-light is-size-7"
+                >Trade-off: +0.5–1ms vs fire-and-forget</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 3 — Cluster -->
+        <div class="benchmark-tab anim" id="tab-cluster" role="tabpanel" hidden>
+          <div class="box mt-0">
+            <p class="heading mb-2">Cluster (3× Mac Mini M4)</p>
+            <p class="has-text-grey-light is-size-7 mb-2">
+              Hardware: 3× Mac Mini M4 (10-core, 16GB) — projected · Redis: OSS
+              7 + Replica (dedicated node) · Concurrency: 10 workers per
+              instance (30 total)
+            </p>
+            <div class="columns is-mobile is-multiline">
+              <div class="column is-half">
+                <strong>Throughput:</strong> <span style="color: var(--accent)"
+                >~2,400 jobs/sec</span> (projected, linear scaling)
+              </div>
+              <div class="column is-half">
+                <strong>Latency:</strong> <span style="color: var(--accent)"
+                >~1.1ms</span> avg
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Comparison table -->
+        <div class="anim mt-5">
+          <p class="mb-3 has-text-grey-light">Comparison (full lifecycle)</p>
+          <div class="table-container">
+            <table class="table is-fullwidth is-bordered comparison-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th class="col-remq">remq</th>
+                  <th>BullMQ</th>
+                  <th>Sidekiq Pro</th>
+                  <th>Temporal</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Full lifecycle</td>
+                  <td class="col-remq">841/sec</td>
+                  <td>~200/sec</td>
+                  <td>~400/sec</td>
+                  <td>~150/sec</td>
+                </tr>
+                <tr>
+                  <td>Latency</td>
+                  <td class="col-remq">1.18ms</td>
+                  <td>~5ms</td>
+                  <td>~2.5ms</td>
+                  <td>~6ms</td>
+                </tr>
+                <tr>
+                  <td>WS progress</td>
+                  <td class="col-remq">built-in</td>
+                  <td>plugin</td>
+                  <td>no</td>
+                  <td>no</td>
+                </tr>
+                <tr>
+                  <td>Type-safe jobs</td>
+                  <td class="col-remq">native</td>
+                  <td>bolted-on</td>
+                  <td>no</td>
+                  <td>yes</td>
+                </tr>
+                <tr>
+                  <td>Deno support</td>
+                  <td class="col-remq">native</td>
+                  <td>no</td>
+                  <td>no</td>
+                  <td>no</td>
+                </tr>
+                <tr>
+                  <td>Multi-instance</td>
+                  <td class="col-remq">automatic</td>
+                  <td>manual</td>
+                  <td>manual</td>
+                  <td>managed</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="is-size-7 has-text-grey-light mt-3">
+            BullMQ's published 800/sec is delivery-only — no retries, no state,
+            no DLQ. Real-world full lifecycle is ~200/sec.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- §05 Features -->
+    <section class="section" id="features">
+      <div class="container">
+        <h2 class="title is-2 has-text-white anim">Features</h2>
+        <div class="columns is-multiline">
+          <div class="column is-one-third anim">
+            <div class="box">
+              <p class="title is-5 has-text-white">defineJob</p>
+              <p class="has-text-grey-light">
+                Type-safe standalone job files, TData inference.
+              </p>
+            </div>
+          </div>
+          <div class="column is-one-third anim">
+            <div class="box">
+              <p class="title is-5 has-text-white">Retry + DLQ</p>
+              <p class="has-text-grey-light">
+                Per-job retry, shouldRetry filter, auto DLQ routing.
+              </p>
+            </div>
+          </div>
+          <div class="column is-one-third anim">
+            <div class="box">
+              <p class="title is-5 has-text-white">Cron scheduler</p>
+              <p class="has-text-grey-light">
+                repeat.pattern, dedup on restart.
+              </p>
+            </div>
+          </div>
+          <div class="column is-one-third anim">
+            <div class="box">
+              <p class="title is-5 has-text-white">WebSocket gateway</p>
+              <p class="has-text-grey-light">
+                ctx.socket.update(), per-job or broadcast.
+              </p>
+            </div>
+          </div>
+          <div class="column is-one-third anim">
+            <div class="box">
+              <p class="title is-5 has-text-white">RemqAdmin SDK</p>
+              <p class="has-text-grey-light">
+                CRUD, pipeline-optimised, 1 round trip for getJob.
+              </p>
+            </div>
+          </div>
+          <div class="column is-one-third anim">
+            <div class="box">
+              <p class="title is-5 has-text-white">Queue stats</p>
+              <p class="has-text-grey-light">
+                Per-status counts, dashboard-ready.
+              </p>
+            </div>
+          </div>
+          <div class="column is-one-third anim">
+            <div class="box">
+              <p class="title is-5 has-text-white">App context</p>
+              <p class="has-text-grey-light">
+                TApp generic, services/db/mailer typed on ctx.
+              </p>
+            </div>
+          </div>
+          <div class="column is-one-third anim">
+            <div class="box">
+              <p class="title is-5 has-text-white">Tokio runtime</p>
+              <p class="has-text-grey-light">
+                True parallel I/O, not single event loop.
+              </p>
+            </div>
+          </div>
+          <div class="column is-one-third anim">
+            <div class="box">
+              <p class="title is-5 has-text-white">Self-cleaning</p>
+              <p class="has-text-grey-light">
+                TTL, MAXLEN, maxLogsPerJob, no manual cleanup.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- §06 Comparison table -->
+    <section class="section">
+      <div class="container">
+        <h2 class="title is-2 has-text-white anim">Comparison</h2>
+        <div class="table-container anim">
+          <table class="table is-fullwidth is-bordered">
+            <thead>
+              <tr>
+                <th>Feature</th>
+                <th class="col-remq">remq</th>
+                <th>BullMQ</th>
+                <th>Sidekiq</th>
+                <th>Temporal</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Runtime</td>
+                <td class="col-remq">Deno/Tokio</td>
+                <td>Node/libuv</td>
+                <td>Ruby MRI</td>
+                <td>Go</td>
+              </tr>
+              <tr>
+                <td>Full lifecycle jobs/sec</td>
+                <td class="col-remq">~841</td>
+                <td>~200</td>
+                <td>~400</td>
+                <td>~150</td>
+              </tr>
+              <tr>
+                <td>Engine overhead</td>
+                <td class="col-remq">1.18ms</td>
+                <td>~5ms</td>
+                <td>~2.5ms</td>
+                <td>~7ms</td>
+              </tr>
+              <tr>
+                <td>TypeScript native</td>
+                <td class="col-remq">✓</td>
+                <td>✓</td>
+                <td>✗</td>
+                <td>✗</td>
+              </tr>
+              <tr>
+                <td>Deno native</td>
+                <td class="col-remq">✓</td>
+                <td>✗</td>
+                <td>✗</td>
+                <td>✗</td>
+              </tr>
+              <tr>
+                <td>WebSocket gateway</td>
+                <td class="col-remq">✓</td>
+                <td>✗</td>
+                <td>✗</td>
+                <td>✗</td>
+              </tr>
+              <tr>
+                <td>Self-cleaning Redis</td>
+                <td class="col-remq">✓</td>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+              </tr>
+              <tr>
+                <td>No separate server</td>
+                <td class="col-remq">✓</td>
+                <td>✓</td>
+                <td>✗</td>
+                <td>✗</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- §07 Install -->
+    <section class="section">
+      <div class="container">
+        <h2 class="title is-2 has-text-white anim">Up in 30 seconds</h2>
+        <div class="columns is-multiline">
+          <div class="column is-half anim">
+            <div class="box">
+              <p class="heading">Step 01</p>
+              <pre
+                class="mb-0"
+              ><code><span class="tok-n">deno add jsr:@hushkey/remq</span></code></pre>
+            </div>
+          </div>
+          <div class="column is-half anim">
+            <div class="box">
+              <p class="heading">Step 02</p>
+              <pre
+                class="mb-0"
+              ><code><span class="tok-k">import</span> <span class="tok-n">{ Remq, defineJob }</span> <span class="tok-k">from</span> <span class="tok-s">'@hushkey/remq'</span><span class="tok-n">;</span></code></pre>
+            </div>
+          </div>
+          <div class="column is-half anim">
+            <div class="box">
+              <p class="heading">Step 03</p>
+              <pre
+                class="mb-0"
+              ><code><span class="tok-fn">defineJob</span><span class="tok-n">(</span><span class="tok-s">'my.job'</span><span class="tok-n">,</span> <span class="tok-k">async</span> <span class="tok-n">(ctx)</span> <span class="tok-k">=&gt;</span> <span class="tok-n">{ ... });</span></code></pre>
+            </div>
+          </div>
+          <div class="column is-half anim">
+            <div class="box">
+              <p class="heading">Step 04</p>
+              <pre
+                class="mb-0"
+              ><code><span class="tok-n">remq</span><span class="tok-n">.</span><span class="tok-fn">on</span><span class="tok-n">(myJob).start();</span> <span class="tok-n">remq</span><span class="tok-n">.</span><span class="tok-fn">emit</span><span class="tok-n">(...);</span></code></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- §08 Footer -->
+    <footer class="footer">
+      <div class="container">
+        <div class="level is-mobile">
+          <div class="level-left">
+            <div class="level-item">remq — MIT License — Built for Deno</div>
+          </div>
+          <div class="level-right">
+            <div class="level-item">
+              <a
+                href="https://github.com/mirairoad/remq"
+                target="_blank"
+                rel="noopener"
+              >GitHub</a>
+              <span class="mx-2">·</span>
+              <a
+                href="https://jsr.io/@hushkey/remq"
+                target="_blank"
+                rel="noopener"
+              >JSR</a>
+              <span class="mx-2">·</span>
+              <a href="docs.html">Docs</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </footer>
+
+    <script src="script.js"></script>
+  </body>
+</html>

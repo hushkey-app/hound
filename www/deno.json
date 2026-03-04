@@ -1,0 +1,10 @@
+{
+  "version": "0.30.0",
+  "tasks": {
+    "dev": "deno run --watch -A main.ts",
+    "serve": "deno run -A main.ts"
+  },
+  "imports": {
+    "@std/assert": "jsr:@std/assert@1"
+  }
+}

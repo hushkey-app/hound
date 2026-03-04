@@ -1,7 +1,8 @@
 {
   "workspace": [
     "core/",
-    "examples/"
+    "examples/",
+    "www/"
   ],
   "tasks": {
     "dev": "deno run -A --allow-scripts --watch examples/index.ts"

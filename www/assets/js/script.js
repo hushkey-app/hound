@@ -85,10 +85,55 @@
     }
   }
 
+  // §21 Navbar burger: single source of truth so burger and menu stay in sync
+  function initNavbar() {
+    const burger = document.querySelector('.navbar-burger');
+    const menu = document.getElementById('navMenu');
+    if (!burger || !menu) return;
+
+    burger.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const isOpen = menu.classList.toggle('is-active');
+      burger.classList.toggle('is-active', isOpen);
+      burger.setAttribute('aria-expanded', String(isOpen));
+    }, { capture: true });
+
+    menu.addEventListener('click', (e) => {
+      if (e.target.closest('a.navbar-item')) {
+        menu.classList.remove('is-active');
+        burger.classList.remove('is-active');
+        burger.setAttribute('aria-expanded', 'false');
+      }
+    });
+  }
+
+  // §20 Benchmark tabs: Single / Async / 3× Cluster
+  function initBenchmarkTabs() {
+    const tabList = document.querySelector('#benchmarks .tabs ul');
+    if (!tabList) return;
+
+    const tabs = tabList.querySelectorAll('li[data-tab]');
+    const panels = document.querySelectorAll('.benchmark-tab');
+
+    tabs.forEach((tabEl) => {
+      tabEl.querySelector('a').addEventListener('click', (e) => {
+        e.preventDefault();
+        const id = tabEl.getAttribute('data-tab');
+        tabs.forEach((t) => t.classList.toggle('is-active', t.getAttribute('data-tab') === id));
+        panels.forEach((p) => {
+          p.hidden = p.id !== 'tab-' + id;
+        });
+      });
+    });
+  }
+
   function init() {
+    initNavbar();
     initBarChart();
     initScrollAnim();
     initSidebarActive();
+    initBenchmarkTabs();
   }
 
   if (document.readyState === 'loading') {

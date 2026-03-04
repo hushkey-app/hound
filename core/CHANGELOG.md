@@ -12,13 +12,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ### Added
 
-- `emitAsync()` — awaited emit with guaranteed Redis write before returning
+- `emitAsync()` — awaited emit; stream write is guaranteed, state key is best-effort (see Fixed)
 - `enqueueJobToStream()` — internal hook for `RemqAdmin.promoteJob()`
 - Auto-create dedicated stream connection on `db+1` via `redis` config option
 - `Remq._reset()` — singleton reset for tests
 
 ### Fixed
 
+- `emitAsync()` partial writes — stream is written first; if state key write fails, job still processes and a warning is logged (avoids silent orphan when stream failed but state key succeeded)
 - `XGROUP SETID '0'` on restart — jobs emitted before `start()` no longer skipped
 - Stream self-cleaning via `XTRIM MINID` after ACK — replaces unsafe `MAXLEN` that silently dropped unprocessed jobs
 - Cron dedup on restart — no duplicate scheduler entries across restarts

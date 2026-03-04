@@ -19,21 +19,52 @@ body {
   background: rgba(10, 10, 10, 0.9);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
+  min-height: 4rem;
 }
 
-.navbar-item,
+.navbar-brand .navbar-item,
+.navbar-menu .navbar-item,
 .navbar-link {
   color: #e8e8e8;
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
+  min-height: 4rem;
+  align-items: center;
 }
 
 .navbar-item:hover,
 .navbar-link:hover {
-  background: var(--surface);
+  background: rgba(232, 255, 71, 0.12);
   color: var(--accent);
+}
+
+/* Override Bulma’s default navbar link/item hover/focus (white + blue) */
+.navbar-link.is-active,
+.navbar-link:focus,
+.navbar-link:focus-within,
+.navbar-link:hover,
+a.navbar-item.is-active,
+a.navbar-item:focus,
+a.navbar-item:focus-within,
+a.navbar-item:hover {
+  background-color: rgba(232, 255, 71, 0.12) !important;
+  color: var(--accent) !important;
 }
 
 .navbar-burger {
   color: #e8e8e8;
+  min-height: 4rem;
+}
+
+/* Version badge — same look as Get started button */
+.version-badge {
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  padding: 0.35em 0.65em;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
 }
 
 .hero {
@@ -80,6 +111,9 @@ body {
   border: 1px solid var(--border);
   color: #e8e8e8;
 }
+.box pre {
+  background: #161b22 !important;
+}
 
 /* §15 Code blocks */
 .code-block {
@@ -113,9 +147,15 @@ body {
   border-radius: 50%;
 }
 
-.code-header .dot.red { background: #ff5f56; }
-.code-header .dot.yellow { background: #ffbd2e; }
-.code-header .dot.green { background: #27c93f; }
+.code-header .dot.red {
+  background: #ff5f56;
+}
+.code-header .dot.yellow {
+  background: #ffbd2e;
+}
+.code-header .dot.green {
+  background: #27c93f;
+}
 
 .code-block pre {
   margin: 0;
@@ -124,15 +164,29 @@ body {
   font-family: ui-monospace, monospace;
   font-size: 0.875rem;
   line-height: 1.5;
+  background-color: #161b22;
 }
 
 /* Token colors */
-.tok-k { color: #ff6b6b; }   /* keywords */
-.tok-fn { color: #e8ff47; }  /* functions */
-.tok-s { color: #47ff8a; }   /* strings */
-.tok-t { color: #ff6b35; }   /* types */
-.tok-c { color: #555; font-style: italic; }  /* comments */
-.tok-n { color: #e8e8e8; }   /* default */
+.tok-k {
+  color: #ff6b6b;
+} /* keywords */
+.tok-fn {
+  color: #e8ff47;
+} /* functions */
+.tok-s {
+  color: #47ff8a;
+} /* strings */
+.tok-t {
+  color: #ff6b35;
+} /* types */
+.tok-c {
+  color: #555;
+  font-style: italic;
+} /* comments */
+.tok-n {
+  color: #e8e8e8;
+} /* default */
 
 /* §16 Ticker animation */
 .ticker-wrap {
@@ -151,8 +205,12 @@ body {
 }
 
 @keyframes ticker {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(-50%); }
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
 }
 
 .ticker-item {
@@ -213,7 +271,7 @@ body {
 /* §18 Sidebar (docs) */
 .docs-sidebar {
   position: sticky;
-  top: 60px;
+  top: 4rem;
   max-height: calc(100vh - 80px);
   overflow-y: auto;
 }
@@ -242,6 +300,12 @@ body {
   font-weight: 500;
 }
 
+/* Override Bulma .menu-list a.is-active (no blue background) */
+.menu-list a.is-active {
+  background-color: transparent;
+  color: var(--accent);
+}
+
 /* §19 Scroll animations */
 .anim {
   opacity: 0;
@@ -254,25 +318,69 @@ body {
   transition: opacity 0.5s ease, transform 0.5s ease;
 }
 
-/* §20 Logo placeholder */
+/* §20 Logo */
 #site-logo {
-  display: none;
-  max-height: 2rem;
-  width: auto;
-}
-
-/* Show logo when src is set (override in HTML or via JS) */
-#site-logo[src]:not([src=""]) {
   display: block;
+  height: 2.5rem;
+  width: auto;
+  max-height: 3rem;
+  object-fit: contain;
 }
 
 /* Accent highlights for remq column in comparison table */
+/* Benchmark section tabs (dark) */
+#benchmarks .tabs.is-boxed li a {
+  background: var(--surface);
+  border-color: var(--border);
+  color: #e8e8e8;
+}
+#benchmarks .tabs.is-boxed li a:hover {
+  background: rgba(232, 255, 71, 0.08);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+#benchmarks .tabs.is-boxed li.is-active a {
+  background: rgba(232, 255, 71, 0.12);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .table .col-remq {
   color: var(--accent);
   font-weight: 500;
 }
 
-/* Section anchors for docs */
+/* Section anchors: leave room for fixed navbar when navigating #id */
+section[id] {
+  scroll-margin-top: 6rem;
+}
 .docs-content section {
-  scroll-margin-top: 80px;
+  scroll-margin-top: 6rem;
+}
+
+code {
+  background-color: transparent;
+  color: var(--accent);
+  font-size: 0.875em;
+  font-weight: 400;
+  padding: 0.25em 0.5em 0.25em;
+}
+
+/* Dark-theme notification (readable text + code) */
+.notification--dark {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: #e8e8e8;
+}
+.notification--dark code {
+  color: var(--accent);
+  background: rgba(232, 255, 71, 0.1);
+  padding: 0.2em 0.4em;
+  border-radius: 4px;
+}
+
+strong {
+  color: #bcbcbc;
+  /* color: yellow; */
+  font-weight: 700;
 }

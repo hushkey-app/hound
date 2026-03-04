@@ -304,6 +304,8 @@ export class Remq<
 
   /**
    * Like emit() but waits for Redis writes to complete. Returns the job id.
+   * Writes stream first (source of truth for processing); state key is best-effort
+   * so a failed state write does not leave an orphan (stream entry ensures job runs).
    */
   async emitAsync(
     event: string,
@@ -314,12 +316,27 @@ export class Remq<
       event,
       data,
       options,
-      true,
+      true, // dryRun — skip fire-and-forget writes
     );
-    await Promise.all([
-      this.#xadd(streamKey, dataJson),
-      this.#setJobState(stateKey, dataJson),
-    ]);
+
+    // Write stream first — this is the source of truth for processing.
+    // If this fails, throw immediately — nothing written, safe to retry.
+    await this.#xadd(streamKey, dataJson);
+
+    // Stream write succeeded — now write state key for admin/tracking.
+    // If this fails, job will still process (stream entry exists)
+    // but won't be trackable via admin until transitionState writes processing key.
+    try {
+      await this.#setJobState(stateKey, dataJson);
+    } catch (err) {
+      // Non-fatal — job is queued and will process.
+      // Log so operator knows state key is missing.
+      console.error(
+        `[remq] emitAsync: state key write failed for ${jobId} — job is queued but initial state missing:`,
+        err,
+      );
+    }
+
     return jobId;
   }
 

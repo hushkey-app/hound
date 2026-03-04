@@ -1,0 +1,20 @@
+---
+description: Site version badge and doc version come from www/deno.json (synced from core at startup)
+globs: www/**/*
+alwaysApply: false
+---
+
+# Version badge and docs version
+
+**Source of truth:** **`core/deno.json`** `"version"`. The www app is **shipped without core**; at startup (when run in the monorepo) the www server **overwrites `www/deno.json`’s `version`** with core’s so the shipped www bundle has the correct version in its own `www/deno.json`. The server then reads version from **`www/deno.json`** and injects it into HTML.
+
+## What must stay in sync
+
+- **`www/deno.json`** must have a `"version"` field (overwritten from core at www server startup in monorepo; when shipped standalone, that file is the only source).
+- **Navbar badge and doc version** — use the placeholder `{{REMQ_VERSION}}` in HTML; the server injects the value from `www/deno.json`.
+
+## When you change the version
+
+1. Update **`core/deno.json`** `"version"` (e.g. `"0.31.0"`).
+2. Run the www server once in the monorepo so it writes that version into `www/deno.json` (or manually set `www/deno.json` `"version"` to match). Do not hardcode the version in www HTML; keep using `{{REMQ_VERSION}}`.
+3. When shipping www alone, `www/deno.json` already contains the version; the server reads it and injects it.

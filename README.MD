@@ -27,52 +27,37 @@ Then import from the workspace package:
 import { Remq } from "@core/mod.ts";
 ```
 
-### Published package (JSR/npm)
+### Published package (JSR)
 
-When REMQ is published, install it from JSR or npm:
+When REMQ is published, install from JSR:
 
 ```bash
-deno add jsr:@remq/remq
-# or
-deno add npm:@remq/remq
+deno add jsr:@hushkey/remq
 ```
 
 Then import from the registry:
 
 ```typescript
-import { Remq } from "jsr:@remq/remq";
+import { Remq, defineJob } from "jsr:@hushkey/remq";
 ```
 
 ## Documentation
 
-- **VitePress docs** — [`www/docs/`](www/docs/) (guides, quick start, API
-  reference)
-- **Core libs** —
-  [`core/libs/task-manager/README.md`](core/libs/task-manager/README.md) (Remq)
-  | [`core/libs/sdk/README.md`](core/libs/sdk/README.md) |
-  [`core/libs/processor/README.md`](core/libs/processor/README.md) |
-  [`core/libs/consumer/README.md`](core/libs/consumer/README.md)
+- **Site & docs** — [`www/`](www/) — Run `deno task serve` in `www/` (or `deno run -A www/main.ts` from repo root) to serve the site; version badge and docs are injected from `www/deno.json` (synced from `core/deno.json` at startup when run in the monorepo).
+- **Core API** — [`core/README.md`](core/README.md) — Retry, DLQ, processor options, job state.
+- **Lib READMEs** — [`core/libs/remq/README.md`](core/libs/remq/README.md) (Remq, emit, on, defineJob) | [`core/libs/remq-admin/README.md`](core/libs/remq-admin/README.md) (RemqAdmin) | [`core/libs/processor/README.md`](core/libs/processor/README.md) | [`core/libs/consumer/README.md`](core/libs/consumer/README.md).
 
 ## Up-and-running example
 
-Minimal flow based on [`examples/remq.plugin.ts`](examples/remq.plugin.ts),
-[`examples/scheduler/onrequest.ts`](examples/scheduler/onrequest.ts), and
-[`examples/index.ts`](examples/index.ts):
+Minimal flow based on [`examples/remq.plugin.ts`](examples/remq.plugin.ts) and [`examples/index.ts`](examples/index.ts):
 
 ```typescript
-import { Remq } from "@core/mod.ts";
+import { Remq, defineJob } from "@core/mod.ts";
 import { Redis } from "ioredis";
 
-const redisOption = {
-  host: "127.0.0.1",
-  port: 6379,
-  db: 1,
-  maxRetriesPerRequest: null,
-  enableReadyCheck: false,
-};
-
-const db = new Redis(redisOption);
-const streamdb = new Redis({ ...redisOption, db: redisOption.db + 1 });
+const opts = { host: "127.0.0.1", port: 6379, db: 1, maxRetriesPerRequest: null };
+const db = new Redis(opts);
+const streamdb = new Redis({ ...opts, db: opts.db + 1 });
 
 const remq = Remq.create({
   db,
@@ -82,28 +67,24 @@ const remq = Remq.create({
   concurrency: 1,
   processor: {
     retry: { maxRetries: 3, retryDelayMs: 1000 },
-    maxLogsPerTask: 100, // self-cleaning: trim oldest logs per task
+    maxLogsPerJob: 100, // self-cleaning: trim oldest logs per job
   },
 });
 
-taskManager.registerHandler({
-  event: "on-request",
-  handler: async (job, ctx) => {
-    console.log("runs on request");
-    console.log(job.data);
-    // ctx.emit({ event: "other", data: {} });  // trigger more tasks
-    // ctx.socket.update('step', 50);           // real-time update to WS client (BETA)
+const requestJob = defineJob<Record<string, unknown>, { name: string; email: string }>(
+  "request",
+  async (ctx) => {
+    console.log(ctx.data);
+    // ctx.emit("other", {});           // trigger more jobs
+    // ctx.socket.update("step", 50);   // real-time update to WS client (BETA)
   },
-  options: { attempts: 3 },
-});
+  { queue: "default", attempts: 3 }
+);
 
-await taskManager.start();
+remq.on(requestJob);
+await remq.start();
 
-taskManager.emit({
-  event: "on-request",
-  data: { name: "Jane Doe", email: "jane.doe@example.com" },
-  options: { id: "onrequest" },
-});
+remq.emit("request", { name: "Jane Doe", email: "jane.doe@example.com" }, { id: "onrequest" });
 ```
 
 ## Running the examples
@@ -118,57 +99,45 @@ deno run -A examples/index.ts
 
 Examples in `examples/`:
 
-| File                                                                                                           | Description                                                 |
-| -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| [`remq.plugin.ts`](examples/remq.plugin.ts)                                                                    | Remq setup (db, streamdb, ctx, processor options)           |
-| [`index.ts`](examples/index.ts)                                                                                | Entry point — imports handlers, starts remq, emits test job |
-| [`scheduler/start.ts`](examples/scheduler/start.ts)                                                            | Scheduler flow with cron pattern                            |
-| [`scheduler/onrequest.ts`](examples/scheduler/onrequest.ts)                                                    | On-request handler with retries                             |
-| [`crons/hello-world.ts`](examples/crons/hello-world.ts), [`crons/multi-jobs.ts`](examples/crons/multi-jobs.ts) | Cron jobs                                                   |
+| File | Description |
+|------|-------------|
+| [`remq.plugin.ts`](examples/remq.plugin.ts) | Remq setup (db, streamdb, ctx, processor options, RemqAdmin) |
+| [`index.ts`](examples/index.ts) | Entry point — registers jobs, starts remq, runs benchmark |
+| [`benchmarks/request.job.ts`](examples/benchmarks/request.job.ts) | Request job with `defineJob`; used by benchmark |
+| [`_scheduled/hello-world.ts`](examples/_scheduled/hello-world.ts), [`_scheduled/multi-jobs.ts`](examples/_scheduled/multi-jobs.ts) | Cron/scheduled jobs |
 
 ## Retry options: levels and combo
 
 Retry settings come from two places; both must allow retries:
 
-| Level                                     | Options                                     | Role                                                                  |
-| ----------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------- |
-| **Per-task** (`emit` / `registerHandler`) | `attempts` or `retryCount`, `retryDelayMs`  | How many retries this task gets; delay between retries                |
-| **Processor** (`processor.retry`)         | `maxRetries`, `retryDelayMs`, `shouldRetry` | Global: enable retries (maxRetries > 0); filter which errors to retry |
+| Level | Options | Role |
+|-------|---------|------|
+| **Per-job** (`emit` / `on`) | `attempts` or `retryCount`, `retryDelayMs` | How many retries this job gets; delay between retries |
+| **Processor** (`processor.retry`) | `maxRetries`, `retryDelayMs`, `shouldRetry` | Global: enable retries (maxRetries > 0); filter which errors to retry |
 
-- **`attempts` and `retryCount`** — Same thing; use one. Both set per-task retry
-  count.
-- **`shouldRetry`** — Processor only: `(error, attempt) => boolean`. Use it to
-  retry transient errors (e.g. network) and skip permanent ones (e.g.
-  validation). Do not put it in `emit` options.
-- **`debounce`** — Handler only (`registerHandler`). Not an emit option.
-- **Combo**: Retries happen only if `retryCount > 0` **and**
-  `processor.retry.maxRetries > 0` **and** (if set)
-  `shouldRetry(error, attempt)` returns true.
+- **`attempts` and `retryCount`** — Same thing; use one. Both set per-job retry count.
+- **`shouldRetry`** — Processor only: `(error, attempt) => boolean`. Use it to retry transient errors (e.g. network) and skip permanent ones (e.g. validation). Do not put it in `emit` options.
+- **`debounce`** — Handler only (`on` options). Not an emit option.
+- **Combo**: Retries happen only if `attempts` / `retryCount` > 0 **and** `processor.retry.maxRetries > 0` **and** (if set) `shouldRetry(error, attempt)` returns true.
 
 See [Core README — Retry options](core/README.md#retry-options-levels-and-combo)
 for details.
 
 ---
 
-## Self-cleaning logs: `maxLogsPerTask`
+## Self-cleaning logs: `maxLogsPerJob`
 
-Set `processor.maxLogsPerTask` to cap log entries per task. Oldest logs are
-trimmed, keeping Redis self-cleaning. See
-[Core README — maxLogsPerTask](core/README.md#self-cleaning-logs-maxlogspertask).
-For production, also see
-[Redis: avoiding overload](core/README.md#redis-avoiding-overload-production)
-(stream growth, log keys, completed/failed key accumulation).
+Set `processor.maxLogsPerJob` to cap log entries per job. Oldest logs are trimmed, keeping Redis self-cleaning. See [Core README — maxLogsPerJob](core/README.md#self-cleaning-logs-maxlogspertask). For production, also see [Redis: avoiding overload](core/README.md#redis-avoiding-overload-production) (stream growth, log keys, completed/failed key accumulation).
 
 ---
 
-## Real-time task updates: `ctx.socket.update` (BETA)
+## Real-time job updates: `ctx.socket.update` (BETA)
 
-When you start Remq with `expose` (WebSocket port), tasks triggered over
-WebSocket can send **progressive updates** to the client. Call
+When you start Remq with `expose` (WebSocket port), jobs can send **progressive updates** to the client. Call
 `ctx.socket.update(data, progress)` inside a handler to push JSON-serializable
 payloads to the socket in real time.
 
-**Use cases:** long-running tasks (report generation, batch jobs), live progress
+**Use cases:** long-running jobs (report generation, batch work), live progress
 (uploads, exports), multi-step workflows where the UI should show “Step 1/5
 done” without polling.
 
