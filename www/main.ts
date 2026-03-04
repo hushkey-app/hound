@@ -3,11 +3,13 @@
  * Version badge and doc version are injected from www/deno.json (synced from core when run in monorepo).
  * Run from repo root: deno run -A www/main.ts
  * Or from www: deno run -A main.ts
- * In Docker/deploy: files are resolved from Deno.cwd() (WORKDIR /app).
+ * In Docker: COPY www/ . puts files in /app; resolution is relative to where main.ts lives.
  */
 
+import { fromFileUrl, join } from "@std/path";
+
+const SCRIPT_DIR = fromFileUrl(new URL(".", import.meta.url));
 const BASE = new URL(".", import.meta.url);
-const CWD = Deno.cwd();
 const WWW_DENO_JSON = new URL("deno.json", BASE);
 const CORE_DENO_JSON = new URL("../core/deno.json", BASE);
 
@@ -56,19 +58,18 @@ function getMime(pathname: string): string {
   return MIME[ext] ?? "application/octet-stream";
 }
 
-/** Resolve request path to a file path (cwd-based so Docker/deploy finds files). */
+/** Resolve request path to a file path relative to script directory (works in Docker: /app/main.ts → /app/pages/...). */
 function resolvePath(pathname: string): string | null {
   const normalized = pathname.replace(/^\/+/, "").replace(/\/+/g, "/");
   if (normalized.includes("..")) return null;
 
-  const base = CWD + (CWD.endsWith("/") ? "" : "/");
-  if (normalized === "" || normalized === "index.html") return base + "pages/index.html";
-  if (normalized === "docs.html") return base + "pages/docs.html";
-  if (normalized === "style.css") return base + "assets/style/style.css";
-  if (normalized === "script.js") return base + "assets/js/script.js";
-  if (normalized === "favicon.ico" || normalized === "public/favicon.ico") return base + "assets/img/favicon.ico";
-  if (normalized === "logo.png" || normalized === "public/logo.png") return base + "assets/img/logo.png";
-  if (normalized.startsWith("assets/")) return base + normalized;
+  if (normalized === "" || normalized === "index.html") return join(SCRIPT_DIR, "pages", "index.html");
+  if (normalized === "docs.html") return join(SCRIPT_DIR, "pages", "docs.html");
+  if (normalized === "style.css") return join(SCRIPT_DIR, "assets", "style", "style.css");
+  if (normalized === "script.js") return join(SCRIPT_DIR, "assets", "js", "script.js");
+  if (normalized === "favicon.ico" || normalized === "public/favicon.ico") return join(SCRIPT_DIR, "assets", "img", "favicon.ico");
+  if (normalized === "logo.png" || normalized === "public/logo.png") return join(SCRIPT_DIR, "assets", "img", "logo.png");
+  if (normalized.startsWith("assets/")) return join(SCRIPT_DIR, normalized);
   return null;
 }
 
