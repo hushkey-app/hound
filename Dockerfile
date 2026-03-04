@@ -1,13 +1,10 @@
-# ---------- Stage 1: bundle the app for production once (force amd64 to avoid wasm/qemu woes)
+# Build only www/ (site + Deno server). Run from repo root: docker build -t remq-www .
 FROM denoland/deno:latest
-
-ARG GIT_REVISION
-ENV DENO_DEPLOYMENT_ID=${GIT_REVISION}
 
 WORKDIR /app
 
 COPY www/ .
 
-RUN deno cache --reload src/main.ts
+RUN deno cache --reload main.ts
 
-CMD ["deno","task","serve" ]
+CMD ["deno", "task", "serve"]
