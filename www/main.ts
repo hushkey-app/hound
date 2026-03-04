@@ -3,9 +3,11 @@
  * Version badge and doc version are injected from www/deno.json (synced from core when run in monorepo).
  * Run from repo root: deno run -A www/main.ts
  * Or from www: deno run -A main.ts
+ * In Docker/deploy: files are resolved from Deno.cwd() (WORKDIR /app).
  */
 
 const BASE = new URL(".", import.meta.url);
+const CWD = Deno.cwd();
 const WWW_DENO_JSON = new URL("deno.json", BASE);
 const CORE_DENO_JSON = new URL("../core/deno.json", BASE);
 
@@ -54,50 +56,34 @@ function getMime(pathname: string): string {
   return MIME[ext] ?? "application/octet-stream";
 }
 
-/** Resolve request path to a file under BASE (www/). */
-function resolve(pathname: string): URL | null {
+/** Resolve request path to a file path (cwd-based so Docker/deploy finds files). */
+function resolvePath(pathname: string): string | null {
   const normalized = pathname.replace(/^\/+/, "").replace(/\/+/g, "/");
   if (normalized.includes("..")) return null;
 
-  // Routes: pages and asset aliases
-  if (normalized === "" || normalized === "index.html") {
-    return new URL("pages/index.html", BASE);
-  }
-  if (normalized === "docs.html") {
-    return new URL("pages/docs.html", BASE);
-  }
-  if (normalized === "style.css") {
-    return new URL("assets/style/style.css", BASE);
-  }
-  if (normalized === "script.js") {
-    return new URL("assets/js/script.js", BASE);
-  }
-  if (normalized === "favicon.ico" || normalized === "public/favicon.ico") {
-    return new URL("assets/img/favicon.ico", BASE);
-  }
-  if (normalized === "logo.png" || normalized === "public/logo.png") {
-    return new URL("assets/img/logo.png", BASE);
-  }
-  // Direct assets
-  if (normalized.startsWith("assets/")) {
-    return new URL(normalized, BASE);
-  }
-
+  const base = CWD + (CWD.endsWith("/") ? "" : "/");
+  if (normalized === "" || normalized === "index.html") return base + "pages/index.html";
+  if (normalized === "docs.html") return base + "pages/docs.html";
+  if (normalized === "style.css") return base + "assets/style/style.css";
+  if (normalized === "script.js") return base + "assets/js/script.js";
+  if (normalized === "favicon.ico" || normalized === "public/favicon.ico") return base + "assets/img/favicon.ico";
+  if (normalized === "logo.png" || normalized === "public/logo.png") return base + "assets/img/logo.png";
+  if (normalized.startsWith("assets/")) return base + normalized;
   return null;
 }
 
 async function handle(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const pathname = url.pathname;
-  const fileUrl = resolve(pathname);
+  const filePath = resolvePath(pathname);
 
-  if (!fileUrl) {
+  if (!filePath) {
     return new Response("Not Found", { status: 404 });
   }
 
   try {
     const mime = getMime(pathname);
-    let body: Uint8Array | string = await Deno.readFile(fileUrl);
+    let body: Uint8Array | string = await Deno.readFile(filePath);
 
     if (mime === "text/html") {
       const html = new TextDecoder().decode(body);
