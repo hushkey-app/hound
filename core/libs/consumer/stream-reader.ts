@@ -16,6 +16,15 @@ export class StreamReader {
   private readonly blockMs: number;
   private readonly visibilityTimeoutMs: number;
 
+  /**
+   * Create a stream reader for a consumer group.
+   * @param streamdb - Redis connection for streams
+   * @param group - Consumer group name (e.g. "processor")
+   * @param consumerId - Stable ID for this consumer (e.g. hostname-pid)
+   * @param readCount - Max entries per XREADGROUP (default 200)
+   * @param blockMs - Block duration for XREADGROUP in ms (default 50)
+   * @param visibilityTimeoutMs - Idle time after which PEL entries are reclaimed via XCLAIM (default 30000)
+   */
   constructor(
     streamdb: RedisConnection,
     group: string,

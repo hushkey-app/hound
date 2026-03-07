@@ -3,9 +3,12 @@
  *
  * @module
  */
+/** Maximum value for setTimeout/setInterval in ms (2^31 - 1). Used by longTimeout to chunk longer delays. */
 export const TIMEOUT_MAX = 2147483647;
 
+/** Handle returned by longTimeout; holds the current timeout ID so the timeout can be cleared or chained. */
 export interface ITimerHandle {
+  /** Current setTimeout ID; updated when longTimeout chains past TIMEOUT_MAX. */
   timeoutId?: ReturnType<typeof setTimeout>;
 }
 
@@ -44,7 +47,11 @@ export function longTimeout(
   return handle;
 }
 
-/* Extracts second, minute, hour, date, month and the weekday from a date. */
+/**
+ * Extract second, minute, hour, day, month, weekday, and year from a date. Month 0–11; weekday 0–6; day 1–31.
+ * @param date - Source date
+ * @returns Object with second, minute, hour, day, month, weekday, year
+ */
 export function extractDateElements(date: Date): {
   second: number;
   minute: number;
@@ -65,12 +72,22 @@ export function extractDateElements(date: Date): {
   };
 }
 
-/* Gets the amount of days in the given month (indexed by 0) of the given year. */
+/**
+ * Number of days in the given month. Month is 0-indexed (0 = January).
+ * @param year - Full year
+ * @param month - Month 0–11
+ * @returns Day count (28–31)
+ */
 export function getDaysInMonth(year: number, month: number): number {
   return new Date(year, month + 1, 0).getDate();
 }
 
-/* Gets the amount of days from weekday1 to weekday2. */
+/**
+ * Number of days from weekday1 to weekday2 (0–6, Sun–Sat). Handles wrap-around.
+ * @param weekday1 - Start weekday 0–6
+ * @param weekday2 - End weekday 0–6
+ * @returns Day delta
+ */
 export function getDaysBetweenWeekdays(
   weekday1: number,
   weekday2: number,
@@ -82,6 +99,12 @@ export function getDaysBetweenWeekdays(
   return 6 - weekday1 + weekday2 + 1;
 }
 
+/**
+ * Wrap a function so sync throws and async rejections are passed to an optional error handler.
+ * @param fn - Function to wrap (sync or async)
+ * @param errorHandler - Optional callback for errors
+ * @returns Wrapped function that catches errors
+ */
 export function wrapFunction(
   fn: () => unknown,
   errorHandler?: (err: unknown) => unknown,
@@ -118,8 +141,11 @@ export interface ICronDefinition {
   readonly weekdays: Set<number>;
 }
 
+/**
+ * Parsed cron schedule. Use getNextDate/getPrevDate or matchDate to compute or test dates. Built from parseCronExpression().
+ */
 export class Cron {
-  // Everything starting at 0, except for days.
+  /** Allowed seconds (0–59), sorted ascending. */
   public readonly seconds: ReadonlyArray<number>;
   public readonly minutes: ReadonlyArray<number>;
   public readonly hours: ReadonlyArray<number>;
@@ -136,6 +162,11 @@ export class Cron {
     weekdays: ReadonlyArray<number>;
   };
 
+  /**
+   * Build a Cron from allowed value sets. Use parseCronExpression() for string expressions.
+   * @param definition - Sets of allowed seconds, minutes, hours, days, months, weekdays
+   * @throws If any set is empty or values are out of range
+   */
   public constructor({
     seconds,
     minutes,
@@ -829,7 +860,12 @@ function parseElement(element: string, constraint: IConstraint): Set<number> {
   return result;
 }
 
-/** Parses a cron expression into a Cron instance. */
+/**
+ * Parse a cron expression (5 or 6 fields) into a Cron. Supports ranges, steps, and nicknames (e.g. @daily).
+ * @param cronExpression - Cron string (e.g. '0 * * * *' for hourly)
+ * @returns Cron instance for getNextDate/getPrevDate/matchDate
+ * @throws If the expression is invalid
+ */
 export function parseCronExpression(cronExpression: string): Cron {
   if (typeof cronExpression !== 'string') {
     throw new TypeError('Invalid cron expression: must be of type string.');

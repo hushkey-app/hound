@@ -13,6 +13,11 @@ export class DebounceManager {
   ) => string;
   private readonly processedKeys = new Map<string, number>();
 
+  /**
+   * Create a debounce manager with a time window and optional key function.
+   * @param windowSeconds - Debounce window in seconds; same key within this window is skipped
+   * @param keyFn - Optional function to derive a debounce key from the message (default: message.id)
+   */
   constructor(
     windowSeconds: number,
     keyFn?: (

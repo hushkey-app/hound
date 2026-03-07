@@ -29,6 +29,11 @@ export class Consumer extends EventTarget {
   readonly #activeJobs = new Set<Promise<void>>();
   #consecutiveRedisErrors = 0;
 
+  /**
+   * Create a consumer for the given streams and handler. Ensures consumer groups in start().
+   * @param options - Streams, streamdb, handler, group, concurrency, and optional priority/poll/read
+   * @throws If streams is empty or handler is missing
+   */
   constructor(options: ConsumerOptions) {
     super();
 

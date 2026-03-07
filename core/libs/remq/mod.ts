@@ -29,6 +29,7 @@ import {
   parseCronExpression,
 } from '../../utils/index.ts';
 
+/** Re-exported option and handler types for Remq (EmitOptions, JobContext, JobHandler, etc.). */
 export type {
   EmitAsyncFunction,
   EmitFunction,
@@ -102,6 +103,10 @@ export class Remq<
     failed: (error: string) => `Job failed: ${error}`,
   };
 
+  /**
+   * Create a Remq instance. Use Remq.create() instead of calling this directly.
+   * @param options - DB connections, concurrency, optional ctx and expose
+   */
   private constructor(options: JobManagerOptions<TApp>) {
     this.db = options.db;
 
@@ -145,6 +150,12 @@ export class Remq<
     this.expose = options.expose;
   }
 
+  /**
+   * Create the singleton Remq instance. Call once at app startup; use getInstance() elsewhere.
+   * @param options - DB connections, concurrency, optional ctx and expose port
+   * @returns The singleton Remq instance
+   * @throws If called more than once (use getInstance() for subsequent access)
+   */
   static create<TApp extends Record<string, unknown> = Record<string, unknown>>(
     options: JobManagerOptions<TApp>,
   ): Remq<TApp> {
@@ -162,6 +173,10 @@ export class Remq<
     Remq.instance = undefined as any;
   }
 
+  /**
+   * Return the existing Remq singleton. Must call create() first.
+   * @returns The singleton Remq instance
+   */
   static getInstance<
     TApp extends Record<string, unknown> = Record<string, unknown>,
   >(): Remq<TApp> {
@@ -418,6 +433,10 @@ export class Remq<
 
   // ─── Start ────────────────────────────────────────────────────────────────
 
+  /**
+   * Start the processor: ensure consumer groups, run cron dedup/cleanup, create processor,
+   * and optionally start the WebSocket gateway if expose was set. Idempotent.
+   */
   async start(): Promise<void> {
     if (this.isStarted) return;
 
@@ -552,6 +571,10 @@ export class Remq<
 
   // ─── Stop / drain ─────────────────────────────────────────────────────────
 
+  /**
+   * Stop the processor, close WebSocket gateway, and drain active jobs. Cleans up job-finished
+   * listeners and socket maps. Safe to call multiple times.
+   */
   async stop(): Promise<void> {
     this.#jobFinishedUnsubscribe?.();
     this.#jobFinishedUnsubscribe = undefined;
@@ -572,6 +595,9 @@ export class Remq<
     this.isStarted = false;
   }
 
+  /**
+   * Wait for all currently processing jobs to finish. Use after stop() to shut down gracefully.
+   */
   async drain(): Promise<void> {
     if (this.processor) {
       await this.processor.waitForActiveJobs();

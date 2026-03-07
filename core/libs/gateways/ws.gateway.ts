@@ -5,23 +5,27 @@
  */
 import type { Remq } from '../remq/mod.ts';
 
+/** Callback invoked when a new WebSocket connection is upgraded. Receives the socket and the HTTP request. */
 export type WsConnectionHandler = (ws: WebSocket, req: Request) => void;
 
+/** Options for creating the WebSocket gateway server. */
 export type WsGatewayOptions = {
+  /** Port to listen on. */
   port: number;
+  /** Hostname to bind (default "0.0.0.0"). */
   hostname?: string;
+  /** Remq instance (used by callers; gateway does not use it directly). */
   remq: Remq<any>;
+  /** Optional callback invoked for each new WebSocket connection. */
   onConnection?: WsConnectionHandler;
 };
 
 /**
- * Starts a WebSocket server bound to 0.0.0.0 (or options.hostname) and the given port.
- * Upgrades HTTP requests with Upgrade: websocket to WebSocket connections.
+ * Start a WebSocket server on the given port and hostname. Upgrades HTTP requests with Upgrade: websocket.
+ * Use the returned value to call shutdown() when stopping.
  *
- * @param options.port - Port to listen on.
- * @param options.hostname - Optional hostname (default "0.0.0.0").
- * @param options.onConnection - Optional callback invoked for each new WebSocket.
- * @returns The Deno server (e.g. for shutdown).
+ * @param options - Port, hostname, Remq instance, and optional onConnection callback
+ * @returns The Deno server object (e.g. for shutdown)
  */
 export function createWsGateway(options: WsGatewayOptions) {
   const { port, hostname = '0.0.0.0', onConnection } = options;

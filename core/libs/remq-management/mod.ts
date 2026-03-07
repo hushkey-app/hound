@@ -14,6 +14,7 @@ import { SUBSCRIBE_JOB_FINISHED } from '../remq/mod.ts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+/** In-memory snapshot of a single job as stored in Redis. Returned by jobs.find(), jobs.get(), etc. */
 export interface JobRecord {
   id: string;
   queue: string;
@@ -36,6 +37,7 @@ export interface JobRecord {
   execId?: string;
 }
 
+/** Summary of a queue: name, stream key, pause state, and current length. Returned by queues.find(). */
 export interface QueueRecord {
   name: string;
   stream: string;
@@ -43,6 +45,7 @@ export interface QueueRecord {
   length: number;
 }
 
+/** Payload emitted when a job reaches a terminal state (completed or failed). Used by events.job callbacks. */
 export interface JobFinishedPayload {
   jobId: string;
   queue: string;
@@ -50,6 +53,7 @@ export interface JobFinishedPayload {
   error?: string;
 }
 
+/** Options to create a RemqManagement instance. Pass db and streamdb; optional remq required for events and promote. */
 export interface RemqManagementOptions {
   db: RedisConnection;
   streamdb: RedisConnection;
@@ -64,6 +68,7 @@ const ALL_STATUSES = [...ACTIVE_STATUSES, ...TERMINAL_STATUSES] as const;
 
 // ─── RemqManagement ───────────────────────────────────────────────────────────
 
+/** Queue and job administration. Use api.jobs and api.queues for CRUD; events.job for completion/failure. */
 export class RemqManagement {
   private readonly db: RedisConnection;
   private readonly streamdb: RedisConnection;
@@ -85,6 +90,10 @@ export class RemqManagement {
     };
   };
 
+  /**
+   * Create a management client. Provide db and streamdb; add remq for events.job and api.jobs.promote().
+   * @param options - Connection and optional Remq instance
+   */
   constructor(options: RemqManagementOptions) {
     this.db = options.db;
     this.streamdb = options.streamdb;

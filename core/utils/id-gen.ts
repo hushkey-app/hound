@@ -52,18 +52,11 @@ function fnv1a(str: string): string {
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * Generate a stable, synchronous job ID from event name + payload.
+ * Generate a stable, synchronous job ID from event name + payload. Deterministic; key-order stable via deep-sort.
  *
- * Properties:
- * - Deterministic: same event + same payload → same ID always
- * - Key-order stable: payload keys are deep-sorted before hashing
- * - Collision resistant: FNV-1a 32-bit, sufficient for job dedup
- * - Cron safe: empty payload {} always produces the same ID per event
- *
- * Examples:
- *   genJobIdSync('property.sync', { id: 1 })    → 'property.sync-a3f2b1c4'
- *   genJobIdSync('host.sync', {})               → 'host.sync-d4e5f6a7'
- *   genJobIdSync('host.sync', {})               → 'host.sync-d4e5f6a7' (stable)
+ * @param event - Event/job name (e.g. 'property.sync')
+ * @param payload - Job data; keys are deep-sorted before hashing for stability
+ * @returns Job ID string in the form event-xxxxxxxx (8 hex chars)
  */
 export function genJobIdSync(event: string, payload: unknown): string {
   const sorted = sortKeys(payload);
@@ -72,14 +65,10 @@ export function genJobIdSync(event: string, payload: unknown): string {
 }
 
 /**
- * Generate a short unique execution ID for terminal state keys.
- * Appended to completed/failed keys to create per-execution audit trail:
- *   queues:default:jobId:completed:30a4e43c
- *   queues:default:jobId:failed:8ba0b94c
+ * Generate a short unique execution ID for terminal state keys (e.g. queues:default:jobId:completed:30a4e43c).
+ * 8 hex chars; not cryptographic — audit trail only.
  *
- * 8 hex chars = 4 bytes = 4 billion combinations.
- * Collision within the same jobId's executions is astronomically unlikely.
- * Not cryptographic — audit trail only.
+ * @returns 8-character hex string (e.g. '30a4e43c')
  */
 export function genExecId(): string {
   const arr = new Uint8Array(4);

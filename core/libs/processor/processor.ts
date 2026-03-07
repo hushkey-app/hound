@@ -25,6 +25,10 @@ export class Processor {
   private readonly jobStateTtlSeconds?: number;
   private readonly maxLogsPerJob?: number;
 
+  /**
+   * Create a processor with consumer config, retry, and optional DLQ.
+   * @param options - Consumer streams/handler, streamdb, and optional retry/DLQ/state TTL
+   */
   constructor(options: ProcessorOptions) {
     this.streamdb = options.streamdb;
     this.retryConfig = options.retry;

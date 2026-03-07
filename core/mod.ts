@@ -6,19 +6,18 @@
 import { HandlerOptions, JobDefinition, JobHandler } from './types/index.ts';
 
 /**
- * Type-safe job definition factory.
- * Use instead of remq.on() directly when you want ctx.data typed.
+ * Type-safe job definition factory. Use instead of remq.on() directly when you want ctx.data typed.
+ *
+ * @param event - Event/job name (e.g. 'property.sync')
+ * @param handler - Async handler; ctx.data is typed by TData
+ * @param options - Optional queue, repeat, attempts, debounce
+ * @returns JobDefinition to pass to remq.on()
  *
  * @example
- * const syncJob = defineJob<AppCtx, { propertyId: number }>({
- *   event: 'property.sync',
- *   handler: async (ctx) => {
- *     ctx.data.propertyId // ← typed as number
- *   },
- *   options: { queue: 'sync', attempts: 3 }
- * })
- *
- * remq.on(syncJob)
+ * const syncJob = defineJob<AppCtx, { propertyId: number }>('property.sync', async (ctx) => {
+ *   ctx.data.propertyId; // typed as number
+ * }, { queue: 'sync', attempts: 3 });
+ * remq.on(syncJob);
  */
 export function defineJob<
   TApp extends Record<string, unknown> = Record<string, unknown>,

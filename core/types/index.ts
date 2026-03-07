@@ -15,11 +15,13 @@ export type RedisConnection = Redis;
 
 // ─── Emit ────────────────────────────────────────────────────────────────────
 
+/** Options for repeating a job on a schedule (cron pattern). */
 export interface RepeatOptions {
-  /** Cron expression e.g. '* * * * *' */
+  /** Cron expression e.g. '* * * * *' (minute, hour, day of month, month, day of week). */
   pattern: string;
 }
 
+/** Options for `emit()` and `emitAsync()`. All fields optional. */
 export interface EmitOptions {
   /** Target queue. Defaults to 'default'. */
   queue?: string;
@@ -76,11 +78,13 @@ export type JobContext<
   socket: JobSocketContext;
 };
 
+/** Async function that processes a job. Receives JobContext; use TData to type ctx.data. */
 export type JobHandler<
   TApp extends Record<string, unknown> = Record<string, unknown>,
   TData = unknown,
 > = (ctx: JobContext<TApp, TData>) => Promise<void>;
 
+/** Options when registering a handler with `remq.on()`. */
 export interface HandlerOptions {
   /** Target queue. Defaults to 'default'. */
   queue?: string;
@@ -101,19 +105,24 @@ export interface JobDefinition<
   TApp extends Record<string, unknown> = Record<string, unknown>,
   TData = unknown,
 > {
+  /** Event name (e.g. 'user.sync'). */
   event: string;
+  /** Handler function; receives JobContext with typed data. */
   handler: JobHandler<TApp, TData>;
+  /** Optional queue, repeat, attempts, debounce. */
   options?: HandlerOptions;
 }
 
 // ─── Emit functions ───────────────────────────────────────────────────────────
 
+/** Fire-and-forget emit. Enqueues the job and returns jobId immediately. */
 export type EmitFunction = (
   event: string,
   data?: unknown,
   options?: EmitOptions,
 ) => string;
 
+/** Awaitable emit. Resolves with jobId after state key and stream entry are written. */
 export type EmitAsyncFunction = (
   event: string,
   data?: unknown,
@@ -122,6 +131,7 @@ export type EmitAsyncFunction = (
 
 // ─── WebSocket ────────────────────────────────────────────────────────────────
 
+/** Context for sending real-time updates to a WebSocket client tracking this job. */
 export interface JobSocketContext {
   /** Send a progressive update to the WebSocket client tracking this job. */
   update: (data: unknown, progress?: number) => void;
@@ -129,17 +139,20 @@ export interface JobSocketContext {
 
 // ─── Job data (internal stream payload) ──────────────────────────────────────
 
+/** Single log entry attached to a job (in-memory until job state is persisted). */
 export interface JobLog {
   message: string;
   timestamp: number;
 }
 
+/** Error record attached to a job (e.g. on failure or retry). */
 export interface JobError {
   message: string;
   stack?: string;
   timestamp: number;
 }
 
+/** Job identity and payload — name, queue, data, and the emit options used to create it. */
 export interface JobState<TData = unknown> {
   name: string;
   queue: string;
@@ -173,25 +186,28 @@ export interface JobData<TData = unknown> {
 
 // ─── Message (internal consumer shape) ───────────────────────────────────────
 
+/** Message as read from a Redis Stream — stream entry ID, stream key, and parsed job payload. */
 export interface Message {
-  /** Redis Stream entry ID e.g. '1234567890123-0' */
+  /** Redis Stream entry ID e.g. '1234567890123-0'. */
   id: string;
-  /** Stream key e.g. 'default-stream' */
+  /** Stream key e.g. 'default-stream'. */
   streamKey: string;
-  /** Parsed job payload */
+  /** Parsed job payload (JobData). */
   data: JobData;
 }
 
+/** Context passed to the low-level stream handler; provides the message and ack/nack. */
 export interface MessageContext {
   message: Message;
   /** ACK the message — removes from PEL. Call only after successful processing. */
   ack: () => Promise<void>;
-  /** NACK — re-queue for retry, then ACK original. */
+  /** NACK — ACK the original (removes from PEL); caller decides retry/DLQ. */
   nack: (error: Error) => Promise<void>;
 }
 
 // ─── Consumer options (internal) ─────────────────────────────────────────────
 
+/** XREADGROUP tuning: how many entries to read and how long to block. */
 export interface ConsumerReadOptions {
   /** Max messages per XREADGROUP call. Default 200. */
   count?: number;
@@ -199,15 +215,25 @@ export interface ConsumerReadOptions {
   blockMs?: number;
 }
 
+/** Options for the Consumer — streams, handler, and tuning. */
 export interface ConsumerOptions {
+  /** Stream keys to read from (e.g. ['default-stream']). */
   streams: string[];
+  /** Redis connection used for streams. */
   streamdb: RedisConnection;
+  /** Handler invoked for each message; must call ctx.ack() or ctx.nack(). */
   handler: (message: Message, ctx: MessageContext) => Promise<void>;
+  /** Max concurrent message handlers. Default 1. */
   concurrency?: number;
+  /** Consumer group name. Default 'processor'. */
   group?: string;
+  /** Stable consumer ID (e.g. hostname-pid). Auto-generated if omitted. */
   consumerId?: string;
+  /** Idle poll interval in ms when no messages. Default 3000. */
   pollIntervalMs?: number;
+  /** XREADGROUP count and block. */
   read?: ConsumerReadOptions;
+  /** Idle ms after which PEL entries are reclaimed (XCLAIM). Default 30000. */
   visibilityTimeoutMs?: number;
   /**
    * Priority map for stream ordering. Lower number = read first.
@@ -219,6 +245,7 @@ export interface ConsumerOptions {
 
 // ─── Processor options (internal) ────────────────────────────────────────────
 
+/** Retry policy: backoff and optional predicate for when to retry. */
 export interface RetryConfig {
   maxRetries?: number;
   retryDelayMs?: number;
@@ -226,6 +253,7 @@ export interface RetryConfig {
   shouldRetry?: (error: Error, attempts: number) => boolean;
 }
 
+/** Dead-letter queue: stream key and optional filter for which failures to send. */
 export interface DlqConfig {
   streamKey?: string;
   shouldSendToDLQ?: (
@@ -235,11 +263,13 @@ export interface DlqConfig {
   ) => boolean;
 }
 
+/** Debounce configuration: window in ms and optional key function. */
 export interface DebounceConfig {
   debounce: number;
   keyFn?: (message: Message) => string;
 }
 
+/** Options for the Processor — consumer config plus retry, DLQ, and state TTL. */
 export interface ProcessorOptions {
   consumer: ConsumerOptions;
   streamdb: RedisConnection;
@@ -255,6 +285,7 @@ export interface ProcessorOptions {
 
 // ─── Remq public options ──────────────────────────────────────────────────────
 
+/** Redis connection options — used to auto-create a connection or streamdb. */
 export interface RedisConfig {
   host?: string;
   port?: number;
@@ -263,6 +294,7 @@ export interface RedisConfig {
   [key: string]: unknown;
 }
 
+/** Options for Remq.create() — db, optional streamdb/redis, ctx, concurrency, expose, processor. */
 export interface JobManagerOptions<
   TApp extends Record<string, unknown> = Record<string, unknown>,
 > {
