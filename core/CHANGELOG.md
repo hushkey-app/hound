@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.49.0] - 2026-03-07
+## [0.49.3] - 2026-03-07
 
 ### Summary
 
@@ -119,7 +119,7 @@ This release prioritises reliability and API consistency over raw throughput. Th
 
 ### Performance
 
-| Metric                   | 0.24          | 0.40          |
+| Metric                   | 0.24          | 0.49.3        |
 | ------------------------ | ------------- | ------------- |
 | Throughput               | ~889 jobs/sec | ~506 jobs/sec |
 | Avg latency              | ~1.12ms       | ~1.98ms       |

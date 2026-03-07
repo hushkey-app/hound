@@ -1,157 +1,309 @@
-# REMQ
+# remq
 
-Redis-backed job queue and scheduler for Deno.
+Deno-native Redis Streams job queue. At-least-once delivery, crash recovery,
+cron scheduling, and a management API.
+
+```ts
+import { Remq } from "@hushkey/remq";
+
+const remq = Remq.create({ db, streamdb });
+
+remq.on("email.send", async (ctx) => {
+  await sendEmail(ctx.data.to);
+});
+
+await remq.start();
+remq.emit("email.send", { to: "leo@hushkey.jp" });
+```
+
+---
 
 ## Installation
 
-### Prerequisites
-
-- Deno 2.5 or higher
-- Redis server running
-
-### Use in this repo (workspace)
-
-Add the workspace import alias to your `deno.json`:
-
-```json
-{
-  "imports": {
-    "@core/": "./core/"
-  }
-}
+```ts
+import { Remq } from "jsr:@hushkey/remq@^0.49.3";
 ```
 
-Then import from the workspace package:
+---
 
-```typescript
-import { Remq } from "@core/mod.ts";
+## Creation
+
+```ts
+const remq = Remq.create(options); // creates singleton
+const remq = Remq.getInstance(); // retrieves singleton
+Remq._reset(); // test use only
 ```
 
-### Published package (JSR)
+---
 
-When REMQ is published, install from JSR:
+## Registration
 
-```bash
-deno add jsr:@hushkey/remq
-```
+```ts
+// Inline
+remq.on("property.sync", async (ctx) => {
+  await sync(ctx.data);
+}, { queue: "sync", attempts: 3 });
 
-Then import from the registry:
-
-```typescript
-import { Remq, defineJob } from "jsr:@hushkey/remq";
-```
-
-## Documentation
-
-- **Site & docs** — [`www/`](www/) — Run `deno task serve` in `www/` (or `deno run -A www/main.ts` from repo root) to serve the site; version badge and docs are injected from `www/deno.json` (synced from `core/deno.json` at startup when run in the monorepo).
-- **Core API** — [`core/README.md`](core/README.md) — Retry, DLQ, processor options, job state.
-- **Lib READMEs** — [`core/libs/remq/README.md`](core/libs/remq/README.md) (Remq, emit, on, defineJob) | [`core/libs/remq-admin/README.md`](core/libs/remq-admin/README.md) (RemqAdmin) | [`core/libs/processor/README.md`](core/libs/processor/README.md) | [`core/libs/consumer/README.md`](core/libs/consumer/README.md).
-
-## Up-and-running example
-
-Minimal flow based on [`examples/remq.plugin.ts`](examples/remq.plugin.ts) and [`examples/index.ts`](examples/index.ts):
-
-```typescript
-import { Remq, defineJob } from "@core/mod.ts";
-import { Redis } from "ioredis";
-
-const opts = { host: "127.0.0.1", port: 6379, db: 1, maxRetriesPerRequest: null };
-const db = new Redis(opts);
-const streamdb = new Redis({ ...opts, db: opts.db + 1 });
-
-const remq = Remq.create({
-  db,
-  streamdb,
-  expose: 4000,
-  ctx: {},
-  concurrency: 1,
-  processor: {
-    retry: { maxRetries: 3, retryDelayMs: 1000 },
-    maxLogsPerJob: 100, // self-cleaning: trim oldest logs per job
+// Type-safe via defineJob
+const syncJob = defineJob<AppCtx, { propertyId: number }>({
+  event: "property.sync",
+  handler: async (ctx) => {
+    ctx.data.propertyId; // typed as number
   },
+  options: { queue: "sync", attempts: 3 },
 });
 
-const requestJob = defineJob<Record<string, unknown>, { name: string; email: string }>(
-  "request",
-  async (ctx) => {
-    console.log(ctx.data);
-    // ctx.emit("other", {});           // trigger more jobs
-    // ctx.socket.update("step", 50);   // real-time update to WS client (BETA)
+remq.on(syncJob);
+```
+
+---
+
+## Emission
+
+```ts
+// Fire and forget — returns jobId immediately
+const jobId = remq.emit("property.sync", { propertyId: 1 });
+
+// Awaitable — resolves when state key + stream entry are both written
+const jobId = await remq.emitAsync("property.sync", { propertyId: 1 });
+```
+
+### Emit options
+
+| Option         | Type                       | Description                                                 |
+| -------------- | -------------------------- | ----------------------------------------------------------- |
+| `queue`        | `string`                   | Target queue. Default `'default'`                           |
+| `id`           | `string`                   | Explicit job ID. Defaults to FNV-1a hash of event + payload |
+| `delay`        | `Date`                     | Don't process before this time                              |
+| `attempts`     | `number`                   | Max retry attempts                                          |
+| `retryDelayMs` | `number`                   | Delay between retries in ms. Default `1000`                 |
+| `retryBackoff` | `'fixed' \| 'exponential'` | Backoff strategy. Default `'fixed'`                         |
+| `repeat`       | `{ pattern: string }`      | Cron expression — makes job self-scheduling                 |
+| `priority`     | `number`                   | Higher = processed first. Default `0`                       |
+
+---
+
+## Handler context
+
+Every handler receives a typed `ctx` object:
+
+```ts
+remq.on('property.sync', async (ctx) => {
+  ctx.id              // stable job ID
+  ctx.name            // event name
+  ctx.queue           // queue name
+  ctx.data            // typed payload (via defineJob)
+  ctx.retryCount      // remaining retries
+  ctx.retriedAttempts // how many times retried so far
+  ctx.logger('msg')   // sync logger — appended to job blob
+  ctx.emit(...)       // fire and forget from handler
+  ctx.emitAsync(...)  // awaitable emit from handler
+  ctx.socket.update() // WebSocket progress update (requires expose)
+})
+```
+
+### Handler options
+
+| Option         | Type                       | Description                       |
+| -------------- | -------------------------- | --------------------------------- |
+| `queue`        | `string`                   | Target queue. Default `'default'` |
+| `attempts`     | `number`                   | Max retry attempts                |
+| `repeat`       | `{ pattern: string }`      | Cron expression                   |
+| `debounce`     | `number`                   | Debounce window in ms             |
+| `retryBackoff` | `'fixed' \| 'exponential'` | Backoff strategy                  |
+
+---
+
+## Lifecycle
+
+```ts
+await remq.start(); // ensure consumer groups, dedup crons, start processor
+await remq.stop(); // stop processor, drain in-flight jobs, shut down WS gateway
+await remq.drain(); // wait for all active jobs to complete
+```
+
+---
+
+## Creation options
+
+| Option        | Type          | Description                                                                          |
+| ------------- | ------------- | ------------------------------------------------------------------------------------ |
+| `db`          | `Redis`       | Primary connection — state keys, locks, pause flags                                  |
+| `streamdb`    | `Redis`       | Dedicated stream connection. Prevents `XREADGROUP BLOCK` from stalling admin queries |
+| `redis`       | `RedisConfig` | Auto-creates `streamdb` on `db+1`. Ignored if `streamdb` provided                    |
+| `ctx`         | `TApp`        | App-level context injected into every handler as `ctx.*`                             |
+| `concurrency` | `number`      | Max concurrent jobs across all queues. Default `1`                                   |
+| `expose`      | `number`      | WebSocket gateway port for real-time job updates                                     |
+| `debug`       | `boolean`     | Enable debug logging. Default `false`                                                |
+
+### Processor options
+
+| Option                          | Type                       | Description                                                                                  |
+| ------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------- |
+| `processor.jobStateTtlSeconds`  | `number`                   | State key TTL. Required in production — prevents unbounded key growth                        |
+| `processor.maxLogsPerJob`       | `number`                   | Max log entries per job. Oldest removed first                                                |
+| `processor.pollIntervalMs`      | `number`                   | Poll interval when stream is empty. Default `3000`                                           |
+| `processor.visibilityTimeoutMs` | `number`                   | How long before a stuck job is reclaimed. Default `30000`. Set to 3–5× your p99 job duration |
+| `processor.read.count`          | `number`                   | Max messages per `XREADGROUP` call. Default `200`                                            |
+| `processor.read.blockMs`        | `number`                   | `BLOCK` timeout in ms. Default `50`                                                          |
+| `processor.streamPriority`      | `Record<string, number>`   | Read order across queues. Lower = higher priority                                            |
+| `processor.retry.retryDelayMs`  | `number`                   | Global retry delay override                                                                  |
+| `processor.retry.retryBackoff`  | `'fixed' \| 'exponential'` | Global backoff override                                                                      |
+| `processor.dlq.streamKey`       | `string`                   | Dead letter queue stream key                                                                 |
+
+---
+
+## Stream priority
+
+Prevents queue starvation under load. Queues not in the map are read last.
+
+```ts
+Remq.create({
+  processor: {
+    streamPriority: {
+      payments: 1, // read first
+      sync: 2, // read second
+      default: 3, // read last
+    },
   },
-  { queue: "default", attempts: 3 }
-);
-
-remq.on(requestJob);
-await remq.start();
-
-remq.emit("request", { name: "Jane Doe", email: "jane.doe@example.com" }, { id: "onrequest" });
+});
 ```
 
-## Running the examples
+---
 
-Make sure Redis is running first (see Installation). From the repo root:
+## Cron scheduling
 
-```bash
-deno task dev
-# or
-deno run -A examples/index.ts
+Jobs with a `repeat.pattern` are self-scheduling — after each execution the next
+tick is automatically queued. Cron state survives restart.
+
+```ts
+remq.on("reports.daily", async (ctx) => {
+  await generateReport();
+}, {
+  queue: "scheduled",
+  repeat: { pattern: "0 9 * * *" }, // every day at 9am
+});
 ```
 
-Examples in `examples/`:
+---
 
-| File | Description |
-|------|-------------|
-| [`remq.plugin.ts`](examples/remq.plugin.ts) | Remq setup (db, streamdb, ctx, processor options, RemqAdmin) |
-| [`index.ts`](examples/index.ts) | Entry point — registers jobs, starts remq, runs benchmark |
-| [`benchmarks/request.job.ts`](examples/benchmarks/request.job.ts) | Request job with `defineJob`; used by benchmark |
-| [`_scheduled/hello-world.ts`](examples/_scheduled/hello-world.ts), [`_scheduled/multi-jobs.ts`](examples/_scheduled/multi-jobs.ts) | Cron/scheduled jobs |
+## Retry and backoff
 
-## Retry options: levels and combo
-
-Retry settings come from two places; both must allow retries:
-
-| Level | Options | Role |
-|-------|---------|------|
-| **Per-job** (`emit` / `on`) | `attempts` or `retryCount`, `retryDelayMs` | How many retries this job gets; delay between retries |
-| **Processor** (`processor.retry`) | `maxRetries`, `retryDelayMs`, `shouldRetry` | Global: enable retries (maxRetries > 0); filter which errors to retry |
-
-- **`attempts` and `retryCount`** — Same thing; use one. Both set per-job retry count.
-- **`shouldRetry`** — Processor only: `(error, attempt) => boolean`. Use it to retry transient errors (e.g. network) and skip permanent ones (e.g. validation). Do not put it in `emit` options.
-- **`debounce`** — Handler only (`on` options). Not an emit option.
-- **Combo**: Retries happen only if `attempts` / `retryCount` > 0 **and** `processor.retry.maxRetries > 0` **and** (if set) `shouldRetry(error, attempt)` returns true.
-
-See [Core README — Retry options](core/README.md#retry-options-levels-and-combo)
-for details.
+```ts
+remq.emit("payment.process", { amount: 100 }, {
+  attempts: 5,
+  retryDelayMs: 1000,
+  retryBackoff: "exponential", // 1s, 2s, 4s, 8s, 16s — capped at 1hr
+});
+```
 
 ---
 
-## Self-cleaning logs: `maxLogsPerJob`
+## WebSocket
 
-Set `processor.maxLogsPerJob` to cap log entries per job. Oldest logs are trimmed, keeping Redis self-cleaning. See [Core README — maxLogsPerJob](core/README.md#self-cleaning-logs-maxlogspertask). For production, also see [Redis: avoiding overload](core/README.md#redis-avoiding-overload-production) (stream growth, log keys, completed/failed key accumulation).
+```ts
+// Server
+Remq.create({ expose: 4000 });
+
+// Handler — send progress updates to connected clients
+remq.on("video.encode", async (ctx) => {
+  await encodeChunk(1);
+  ctx.socket.update({ progress: 33 });
+  await encodeChunk(2);
+  ctx.socket.update({ progress: 66 });
+  await encodeChunk(3);
+  ctx.socket.update({ progress: 100 });
+});
+
+// Client
+const ws = new WebSocket("ws://localhost:4000");
+ws.send(JSON.stringify({ event: "video.encode", data: { id: 1 } }));
+ws.onmessage = ({ data }) => console.log(JSON.parse(data));
+// { type: 'queued', jobId: '...' }
+// { type: 'job_update', progress: 33, ... }
+// { type: 'job_finished', status: 'completed', ... }
+```
 
 ---
 
-## Real-time job updates: `ctx.socket.update` (BETA)
+## Management API
 
-When you start Remq with `expose` (WebSocket port), jobs can send **progressive updates** to the client. Call
-`ctx.socket.update(data, progress)` inside a handler to push JSON-serializable
-payloads to the socket in real time.
+```ts
+import { RemqManagement } from "@hushkey/remq/management";
 
-**Use cases:** long-running jobs (report generation, batch work), live progress
-(uploads, exports), multi-step workflows where the UI should show “Step 1/5
-done” without polling.
+const management = new RemqManagement({ db, streamdb, remq });
+```
 
-**Client:** listen for `type: 'job_update'` messages
-(`{ type: 'job_update', id, data, progress }`). To receive every job update
-(broadcast), connect with header **`x-get-broadcast: true`**. See
-[Core README — Real-time job updates](core/README.md#real-time-job-updates-ctxsocketupdate-beta)
-for a full example.
+### Jobs
+
+```ts
+await management.api.jobs.find(); // all jobs, most recent state per jobId
+await management.api.jobs.get("default:jobId"); // single job by {queue}:{jobId}
+await management.api.jobs.delete("default:jobId");
+await management.api.jobs.promote("default:jobId"); // fire immediately
+await management.api.jobs.pause("default:jobId"); // delay until Number.MAX_SAFE_INTEGER
+```
+
+### Queues
+
+```ts
+await management.api.queues.find(); // all queues including empty streams
+await management.api.queues.pause("payments");
+await management.api.queues.resume("payments");
+await management.api.queues.reset("payments"); // flush all jobs + trim stream
+await management.api.queues.running("payments"); // true if active, false if paused
+```
+
+### Events
+
+```ts
+// All terminal events
+const unsub = management.events.job.finished((p) => {
+  console.log(p.jobId, p.status, p.error);
+});
+
+// Filtered
+management.events.job.completed((p) => notifyClient(p.jobId));
+management.events.job.failed((p) => alertOncall(p.error));
+
+// Unsubscribe
+unsub();
+```
 
 ---
 
-## Upcoming
+## Delivery guarantees
 
-- **WS connection for remote processor** — WebSocket connection to run the
-  processor remotely. Use a single powerful machine (e.g. 8 cores) as the
-  worker; many clients connect over WS and only trigger events. No need to run
-  the full stack on each client.
+remq uses Redis Streams consumer groups for at-least-once delivery.
+
+- Messages stay in the PEL (Pending Entries List) until the handler completes
+  successfully
+- If the process crashes mid-job, the message is reclaimed on next startup via
+  `XCLAIM`
+- `visibilityTimeoutMs` controls how long before a stuck message is reclaimed —
+  set it above your p99 job duration to avoid premature reclaim on slow jobs
+- ACK happens automatically after handler success — no manual `ctx.ack()` needed
+
+---
+
+## Performance
+
+| Metric                   | v0.24         | v0.49.3       |
+| ------------------------ | ------------- | ------------- |
+| Throughput               | ~889 jobs/sec | ~506 jobs/sec |
+| Avg latency              | ~1.12ms       | ~1.98ms       |
+| At-least-once delivery   | ✗             | ✓             |
+| Crash recovery           | ✗             | ✓             |
+| Exponential backoff      | ✗             | ✓             |
+| Stream priority          | ✗             | ✓             |
+| Cron restart reliability | Partial       | ✓             |
+
+The throughput reduction is the cost of ACK-after-completion — each job requires
+a confirmed `XACK` roundtrip before the next state transition. Correct behaviour
+for a production job queue.
+
+---
+
+## License
+
+MIT
