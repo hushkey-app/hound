@@ -8,8 +8,7 @@
     "url": "https://github.com/mirairoad/tempotask"
   },
   "imports": {
-    "@core/": "../core/",
-    "ioredis": "npm:ioredis@^5.10.0"
+    "@core/": "../core/"
   },
   "exports": {
     "./server": "./index.ts"

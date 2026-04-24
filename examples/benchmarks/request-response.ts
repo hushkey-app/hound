@@ -1,5 +1,5 @@
 /**
- * Benchmark: Request/Response over remq
+ * Benchmark: Request/Response over hound
  *
  * Measures round-trip latency and throughput for emit → handler → finished.
  * Uses a JobWaiter (Map-based O(1) routing) instead of broadcast listeners.
@@ -8,7 +8,7 @@
  *   deno run -A benchmark/request-response.ts
  */
 
-import { management, remq } from '../remq.plugin.ts';
+import { hound, management } from '../hound.plugin.ts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -32,7 +32,7 @@ interface BenchmarkConfig {
   name: string;
   requests: number;
   /** Client-side parallelism — how many enqueueAndWait calls in-flight simultaneously.
-   *  Independent of remq.concurrency which is fixed at 10. */
+   *  Independent of hound.concurrency which is fixed at 10. */
   concurrency: number;
   payloadSize: number;
 }
@@ -94,12 +94,12 @@ class JobWaiter<T extends typeof management> {
 // ─── enqueueAndWait ───────────────────────────────────────────────────────────
 
 /**
- * remq equivalent of enqueueAndWait.
+ * hound equivalent of enqueueAndWait.
  * Subscribes before emitting to avoid race where fast handler finishes
  * before the waiter is registered.
  */
 async function enqueueAndWait(
-  remq: any,
+  hound: any,
   waiter: JobWaiter<typeof management>,
   event: string,
   payload: BenchmarkPayload,
@@ -110,7 +110,7 @@ async function enqueueAndWait(
   // completes before waiter is registered
   const waitPromise = waiter.waitForId(id, options.timeoutMs ?? 30_000);
   // Fire and forget — no await, workers stay parallel
-  remq.emit(event, payload, { queue: options.queue, id });
+  hound.emit(event, payload, { queue: options.queue, id });
   return waitPromise;
 }
 
@@ -152,7 +152,7 @@ ${'─'.repeat(50)}
 // ─── Benchmark runner ─────────────────────────────────────────────────────────
 
 async function runBenchmark(
-  remq: any,
+  hound: any,
   waiter: JobWaiter<typeof management>,
   config: BenchmarkConfig,
 ): Promise<Stats> {
@@ -175,7 +175,7 @@ async function runBenchmark(
 
           try {
             const latency = await enqueueAndWait(
-              remq,
+              hound,
               waiter,
               'bench.job',
               { data: payload, timestamp: Date.now() },
@@ -211,7 +211,7 @@ async function main(): Promise<void> {
 
   console.log(`
 ╔══════════════════════════════════════════════════╗
-║     Request/Response Benchmark — remq            ║
+║     Request/Response Benchmark — hound            ║
 ╚══════════════════════════════════════════════════╝
 
 Redis URL: ${redisUrl}
@@ -219,14 +219,14 @@ Redis URL: ${redisUrl}
 
   // ── Redis connections ──────────────────────────────────────────────────────
 
-  remq.on('bench.job', async (_ctx) => {
+  hound.on('bench.job', async (_ctx) => {
     // 0ms work — pure infrastructure latency measurement
   }, { queue: 'bench' });
 
   // JobWaiter — single subscription, O(1) routing per completion
   const waiter = new JobWaiter<typeof management>(management);
 
-  await remq.start();
+  await hound.start();
 
   // ── Warmup ─────────────────────────────────────────────────────────────────
   console.log('Warming up (100 requests)...');
@@ -241,7 +241,7 @@ Redis URL: ${redisUrl}
         const t0 = performance.now();
         const diagId = `warmup-diag-${crypto.randomUUID()}`;
         const diagWait = waiter.waitForId(diagId, 30_000);
-        remq.emit('bench.job', payload, { queue: 'bench', id: diagId });
+        hound.emit('bench.job', payload, { queue: 'bench', id: diagId });
         const t1 = performance.now();
         console.log(`[diag] emit: ${(t1 - t0).toFixed(2)}ms, jobId: ${diagId}`);
         const latency = await diagWait;
@@ -255,7 +255,7 @@ Redis URL: ${redisUrl}
       }
 
       const latency = await enqueueAndWait(
-        remq,
+        hound,
         waiter,
         'bench.job',
         payload,
@@ -296,13 +296,13 @@ Redis URL: ${redisUrl}
   ];
 
   for (let i = 0; i < benchmarks.length; i++) {
-    const stats = await runBenchmark(remq, waiter, benchmarks[i]);
+    const stats = await runBenchmark(hound, waiter, benchmarks[i]);
     console.log(formatStats(labels[i], stats));
   }
 
   // ── Cleanup ────────────────────────────────────────────────────────────────
   waiter.destroy();
-  await remq.stop();
+  await hound.stop();
   await management.api.queues.reset('bench');
 
   console.log('Benchmark complete.');

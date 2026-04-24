@@ -6,7 +6,7 @@ const getPid = (): number => {
 };
 
 const isDebug = (): boolean => {
-  return Deno.env.get('REMQ_DEBUG') === 'TRUE';
+  return Deno.env.get('HOUND_DEBUG') === 'TRUE';
 };
 
 export const debug = (...args: unknown[]): void => {

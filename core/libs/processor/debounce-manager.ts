@@ -1,5 +1,5 @@
 /**
- * Debounce manager for job/message processing (used by Remq handler options).
+ * Debounce manager for job/message processing (used by Hound handler options).
  *
  * @module
  */

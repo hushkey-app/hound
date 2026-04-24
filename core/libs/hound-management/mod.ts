@@ -1,16 +1,16 @@
 /**
- * RemqManagement — queue and job administration via management.api.jobs and management.api.queues.
+ * HoundManagement — queue and job administration via management.api.jobs and management.api.queues.
  *
  * @example
- * const management = new RemqManagement({ db, remq });
+ * const management = new HoundManagement({ db, hound });
  * await management.api.jobs.find();
  * await management.api.queues.find();
  *
  * @module
  */
 import type { RedisConnection } from '../../types/index.ts';
-import type { Remq } from '../remq/mod.ts';
-import { SUBSCRIBE_JOB_FINISHED } from '../remq/mod.ts';
+import type { Hound } from '../hound/mod.ts';
+import { SUBSCRIBE_JOB_FINISHED } from '../hound/mod.ts';
 import { QueueStore } from '../consumer/queue-store.ts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -53,10 +53,10 @@ export interface JobFinishedPayload {
   error?: string;
 }
 
-/** Options to create a RemqManagement instance. */
-export interface RemqManagementOptions {
+/** Options to create a HoundManagement instance. */
+export interface HoundManagementOptions {
   db: RedisConnection;
-  remq?: Remq<any>;
+  hound?: Hound<any>;
 }
 
 // ─── Active job statuses — terminal states use execId suffix ─────────────────
@@ -64,12 +64,12 @@ export interface RemqManagementOptions {
 const ACTIVE_STATUSES = ['processing', 'waiting', 'delayed'] as const;
 const TERMINAL_STATUSES = ['completed', 'failed'] as const;
 
-// ─── RemqManagement ───────────────────────────────────────────────────────────
+// ─── HoundManagement ───────────────────────────────────────────────────────────
 
 /** Queue and job administration. Use api.jobs and api.queues for CRUD; events.job for completion/failure. */
-export class RemqManagement {
+export class HoundManagement {
   private readonly db: RedisConnection;
-  private readonly remq?: Remq<any>;
+  private readonly hound?: Hound<any>;
 
   readonly api: {
     jobs: JobsApi;
@@ -84,13 +84,13 @@ export class RemqManagement {
     };
   };
 
-  constructor(options: RemqManagementOptions) {
+  constructor(options: HoundManagementOptions) {
     this.db = options.db;
-    this.remq = options.remq;
+    this.hound = options.hound;
 
     this.api = {
-      jobs: new JobsApi(this.db, this.remq),
-      queues: new QueuesApi(this.db, this.remq),
+      jobs: new JobsApi(this.db, this.hound),
+      queues: new QueuesApi(this.db, this.hound),
     };
 
     this.events = {
@@ -103,12 +103,12 @@ export class RemqManagement {
   }
 
   #subscribe(cb: (payload: JobFinishedPayload) => void): () => void {
-    if (!this.remq) {
+    if (!this.hound) {
       throw new Error(
-        'management.events requires a Remq instance: new RemqManagement({ db, remq })',
+        'management.events requires a Hound instance: new HoundManagement({ db, hound })',
       );
     }
-    return this.remq[SUBSCRIBE_JOB_FINISHED](cb);
+    return this.hound[SUBSCRIBE_JOB_FINISHED](cb);
   }
 }
 
@@ -117,7 +117,7 @@ export class RemqManagement {
 class JobsApi {
   constructor(
     private readonly db: RedisConnection,
-    private readonly remq?: Remq<any>,
+    private readonly hound?: Hound<any>,
   ) {}
 
   /**
@@ -201,8 +201,8 @@ class JobsApi {
   }
 
   async promote(key: string): Promise<JobRecord | null> {
-    if (!this.remq) {
-      throw new Error('promote() requires a Remq instance: new RemqManagement({ db, remq })');
+    if (!this.hound) {
+      throw new Error('promote() requires a Hound instance: new HoundManagement({ db, hound })');
     }
 
     const job = await this.get(key);
@@ -218,7 +218,7 @@ class JobsApi {
     await this.db.set(`queues:${job.queue}:${job.id}:${job.status}`, JSON.stringify(promoted));
 
     // Re-enqueue with score=now to run immediately
-    this.remq.emit(job.name, job.data, { queue: job.queue, id: job.id, delay: new Date() });
+    this.hound.emit(job.name, job.data, { queue: job.queue, id: job.id, delay: new Date() });
 
     return promoted;
   }
@@ -264,7 +264,7 @@ class JobsApi {
         execId,
       };
     } catch {
-      console.error(`[remq] Failed to parse job from key: ${key}`);
+      console.error(`[hound] Failed to parse job from key: ${key}`);
       return null;
     }
   }
@@ -288,7 +288,7 @@ class QueuesApi {
 
   constructor(
     private readonly db: RedisConnection,
-    private readonly remq?: Remq<any>,
+    private readonly hound?: Hound<any>,
   ) {
     this.queueStore = new QueueStore(db);
   }

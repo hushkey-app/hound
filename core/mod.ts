@@ -1,23 +1,23 @@
 /**
- * Remq — job queue and worker runtime. Export point for Remq, RemqManagement, and defineJob.
+ * Hound — job queue and worker runtime. Export point for Hound, HoundManagement, and defineJob.
  *
  * @module
  */
 import { HandlerOptions, JobDefinition, JobHandler } from './types/index.ts';
 
 /**
- * Type-safe job definition factory. Use instead of remq.on() directly when you want ctx.data typed.
+ * Type-safe job definition factory. Use instead of hound.on() directly when you want ctx.data typed.
  *
  * @param event - Event/job name (e.g. 'property.sync')
  * @param handler - Async handler; ctx.data is typed by TData
  * @param options - Optional queue, repeat, attempts, debounce
- * @returns JobDefinition to pass to remq.on()
+ * @returns JobDefinition to pass to hound.on()
  *
  * @example
  * const syncJob = defineJob<AppCtx, { propertyId: number }>('property.sync', async (ctx) => {
  *   ctx.data.propertyId; // typed as number
  * }, { queue: 'sync', attempts: 3 });
- * remq.on(syncJob);
+ * hound.on(syncJob);
  */
 export function defineJob<
   TApp extends Record<string, unknown> = Record<string, unknown>,
@@ -30,5 +30,7 @@ export function defineJob<
   return { event, handler, options };
 }
 
-export { Remq } from './libs/remq/mod.ts';
-export { RemqManagement } from './libs/remq-management/mod.ts';
+export { Hound } from './libs/hound/mod.ts';
+export { HoundManagement } from './libs/hound-management/mod.ts';
+export { InMemoryStorage } from './libs/storage/in-memory.ts';
+export { DenoKvStorage } from './libs/storage/deno-kv.ts';

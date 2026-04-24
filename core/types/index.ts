@@ -1,17 +1,41 @@
 /**
- * Remq types — single source of truth for public and internal types (emit, handlers, options, job data).
+ * Hound types — single source of truth for public and internal types (emit, handlers, options, job data).
  *
  * @module
  */
-import type { Redis } from 'ioredis';
 
-// ─── Redis ────────────────────────────────────────────────────────────────────
+// ─── Storage ──────────────────────────────────────────────────────────────────
 
 /**
- * Abstraction over ioredis so internals aren't coupled to it directly.
- * Accepts a full Redis instance or any compatible client.
+ * Minimal storage interface — implemented by ioredis Redis and InMemoryStorage.
+ * All hound internals program against this interface, never against ioredis directly.
  */
-export type RedisConnection = Redis;
+export interface StorageClient {
+  get(key: string): Promise<string | null>;
+  // deno-lint-ignore no-explicit-any
+  set(key: string, value: string, ...args: any[]): Promise<any>;
+  del(...keys: string[]): Promise<number>;
+  zadd(key: string, score: number, member: string): Promise<number | string>;
+  zrangebyscore(key: string, min: number | string, max: number | string): Promise<string[]>;
+  zrem(key: string, ...members: string[]): Promise<number>;
+  zcard(key: string): Promise<number>;
+  zscore(key: string, member: string): Promise<string | null>;
+  // deno-lint-ignore no-explicit-any
+  eval(script: string, numkeys: number, ...args: any[]): Promise<any>;
+  scan(
+    cursor: string | number,
+    matchFlag: 'MATCH',
+    pattern: string,
+    countFlag: 'COUNT',
+    count: number,
+  ): Promise<[string, string[]]>;
+  // deno-lint-ignore no-explicit-any
+  pipeline(): any;
+  disconnect(): void;
+}
+
+/** Accepts ioredis Redis or InMemoryStorage. */
+export type RedisConnection = StorageClient;
 
 // ─── Emit ────────────────────────────────────────────────────────────────────
 
@@ -74,7 +98,7 @@ export type JobContext<
   emit: EmitFunction;
   /** Awaitable emit. Resolves when state key and queue entry are written. */
   emitAsync: EmitAsyncFunction;
-  /** WebSocket context. Only available when remq is started with expose option. */
+  /** WebSocket context. Only available when hound is started with expose option. */
   socket: JobSocketContext;
 };
 
@@ -84,7 +108,7 @@ export type JobHandler<
   TData = unknown,
 > = (ctx: JobContext<TApp, TData>) => Promise<void>;
 
-/** Options when registering a handler with `remq.on()`. */
+/** Options when registering a handler with `hound.on()`. */
 export interface HandlerOptions {
   /** Target queue. Defaults to 'default'. */
   queue?: string;
@@ -269,10 +293,10 @@ export interface ProcessorOptions {
   claimCount?: number;
 }
 
-// ─── Remq public options ──────────────────────────────────────────────────────
+// ─── Hound public options ──────────────────────────────────────────────────────
 
-/** Options for Remq.create(). */
-export interface JobManagerOptions<
+/** Options for Hound.create(). */
+export interface HoundOptions<
   TApp extends Record<string, unknown> = Record<string, unknown>,
 > {
   /** Redis connection — state keys, queue sorted sets, locks, pause flags. */

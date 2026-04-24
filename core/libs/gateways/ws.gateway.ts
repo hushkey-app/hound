@@ -3,7 +3,7 @@
  *
  * @module
  */
-import type { Remq } from '../remq/mod.ts';
+import type { Hound } from '../hound/mod.ts';
 
 /** Callback invoked when a new WebSocket connection is upgraded. Receives the socket and the HTTP request. */
 export type WsConnectionHandler = (ws: WebSocket, req: Request) => void;
@@ -14,8 +14,8 @@ export type WsGatewayOptions = {
   port: number;
   /** Hostname to bind (default "0.0.0.0"). */
   hostname?: string;
-  /** Remq instance (used by callers; gateway does not use it directly). */
-  remq: Remq<any>;
+  /** Hound instance (used by callers; gateway does not use it directly). */
+  hound: Hound<any>;
   /** Optional callback invoked for each new WebSocket connection. */
   onConnection?: WsConnectionHandler;
 };
@@ -24,7 +24,7 @@ export type WsGatewayOptions = {
  * Start a WebSocket server on the given port and hostname. Upgrades HTTP requests with Upgrade: websocket.
  * Use the returned value to call shutdown() when stopping.
  *
- * @param options - Port, hostname, Remq instance, and optional onConnection callback
+ * @param options - Port, hostname, Hound instance, and optional onConnection callback
  * @returns The Deno server object (e.g. for shutdown)
  */
 export function createWsGateway(options: WsGatewayOptions) {

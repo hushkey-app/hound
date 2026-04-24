@@ -1,10 +1,9 @@
 /**
- * Remq — high-level public API for job management (singleton lifecycle, handlers, emit, start/stop).
+ * Hound — high-level public API for job management (singleton lifecycle, handlers, emit, start/stop).
  * Built on Processor → Consumer → QueueStore.
  *
  * @module
  */
-import { Redis } from 'ioredis';
 import { Processor } from '../processor/processor.ts';
 import { DebounceManager } from '../processor/debounce-manager.ts';
 import { QueueStore } from '../consumer/queue-store.ts';
@@ -19,7 +18,7 @@ import type {
   JobData,
   JobDefinition,
   JobHandler,
-  JobManagerOptions,
+  HoundOptions,
   JobSocketContext,
   Message,
   MessageContext,
@@ -32,7 +31,7 @@ import {
   parseCronExpression,
 } from '../../utils/index.ts';
 
-/** Re-exported option and handler types for Remq. */
+/** Re-exported option and handler types for Hound. */
 export type {
   EmitAsyncFunction,
   EmitFunction,
@@ -41,16 +40,16 @@ export type {
   JobContext,
   JobDefinition,
   JobHandler,
-  JobManagerOptions,
+  HoundOptions,
 } from '../../types/index.ts';
 
 /** Symbol for internal subscription. Not part of public API. */
-export const SUBSCRIBE_JOB_FINISHED = Symbol.for('remq.subscribeJobFinished');
+export const SUBSCRIBE_JOB_FINISHED = Symbol.for('hound.subscribeJobFinished');
 
-export class Remq<
+export class Hound<
   TApp extends Record<string, unknown> = Record<string, unknown>,
 > {
-  private static instance: Remq<any>;
+  private static instance: Hound<any>;
 
   private readonly db: RedisConnection;
   private readonly queueStore: QueueStore;
@@ -59,7 +58,7 @@ export class Remq<
     emitAsync: EmitAsyncFunction;
   };
   private readonly concurrency: number;
-  private readonly processorOptions: JobManagerOptions<TApp>['processor'];
+  private readonly processorOptions: HoundOptions<TApp>['processor'];
 
   private handlers: Map<string, JobHandler<TApp, any>> = new Map();
   private handlerDebounce: Map<string, DebounceManager> = new Map();
@@ -101,7 +100,7 @@ export class Remq<
     failed: (error: string) => `Job failed: ${error}`,
   };
 
-  private constructor(options: JobManagerOptions<TApp>) {
+  private constructor(options: HoundOptions<TApp>) {
     this.db = options.db;
     this.queueStore = new QueueStore(this.db);
     this.concurrency = options.concurrency ?? 1;
@@ -117,28 +116,28 @@ export class Remq<
   }
 
   static create<TApp extends Record<string, unknown> = Record<string, unknown>>(
-    options: JobManagerOptions<TApp>,
-  ): Remq<TApp> {
+    options: HoundOptions<TApp>,
+  ): Hound<TApp> {
     const g = globalThis as Record<string, unknown>;
-    if (g['__remq_instance__']) {
-      Remq.instance = g['__remq_instance__'] as Remq<TApp>;
-      return Remq.instance;
+    if (g['__hound_instance__']) {
+      Hound.instance = g['__hound_instance__'] as Hound<TApp>;
+      return Hound.instance;
     }
-    Remq.instance = new Remq(options);
-    g['__remq_instance__'] = Remq.instance;
-    return Remq.instance as Remq<TApp>;
+    Hound.instance = new Hound(options);
+    g['__hound_instance__'] = Hound.instance;
+    return Hound.instance as Hound<TApp>;
   }
 
   /** Reset singleton — test use only. */
   static _reset(): void {
-    Remq.instance = undefined as any;
-    (globalThis as Record<string, unknown>)['__remq_instance__'] = undefined;
+    Hound.instance = undefined as any;
+    (globalThis as Record<string, unknown>)['__hound_instance__'] = undefined;
   }
 
   static getInstance<
     TApp extends Record<string, unknown> = Record<string, unknown>,
-  >(): Remq<TApp> {
-    return Remq.instance as Remq<TApp>;
+  >(): Hound<TApp> {
+    return Hound.instance as Hound<TApp>;
   }
 
   // ─── Handler registration ─────────────────────────────────────────────────
@@ -274,7 +273,7 @@ export class Remq<
     return parsed.delayUntil - (opts.priority ?? 0);
   }
 
-  /** Enqueue an existing job payload directly (used by RemqManagement.promoteJob). */
+  /** Enqueue an existing job payload directly (used by HoundManagement.promoteJob). */
   async enqueueJob(queue: string, jobPayload: Record<string, unknown>): Promise<void> {
     const jobId = jobPayload.id as string;
     const score = (jobPayload.delayUntil as number ?? Date.now()) - ((jobPayload.priority as number) ?? 0);
@@ -411,7 +410,7 @@ export class Remq<
       this.wsServer = createWsGateway({
         port: this.expose,
         hostname: '0.0.0.0',
-        remq: this,
+        hound: this,
         onConnection: (ws, req) => this.#handleWsConnection(ws, req),
       });
       this.#jobFinishedUnsubscribe = this[SUBSCRIBE_JOB_FINISHED]((payload) => {
@@ -439,11 +438,11 @@ export class Remq<
           }
         }
       });
-      debug(`Remq WS gateway listening on 0.0.0.0:${this.expose}`);
+      debug(`Hound WS gateway listening on 0.0.0.0:${this.expose}`);
     }
 
     const queueList = Array.from(this.queues).join(', ');
-    debug(`Remq started with ${this.queues.size} queue(s) [${queueList}] and concurrency ${this.concurrency}`);
+    debug(`Hound started with ${this.queues.size} queue(s) [${queueList}] and concurrency ${this.concurrency}`);
   }
 
   // ─── Stop / drain ─────────────────────────────────────────────────────────
@@ -737,7 +736,7 @@ export class Remq<
     if (this.expose == null) {
       return {
         update: () => {
-          throw new Error('ctx.socket.update() requires Remq to be started with expose option.');
+          throw new Error('ctx.socket.update() requires Hound to be started with expose option.');
         },
       };
     }

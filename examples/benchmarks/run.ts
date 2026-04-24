@@ -7,7 +7,7 @@
  * Run: deno task dev (from repo root, or run this file with appropriate imports)
  * Or from examples: deno run --allow-net --allow-env -A benchmarks/run.ts
  */
-import { remq } from '../remq.plugin.ts';
+import { hound } from '../hound.plugin.ts';
 import { requestJob } from './request.job.ts';
 import { benchmark } from './utilities/benchmark.ts';
 
@@ -21,14 +21,14 @@ benchmark.configure({
   concurrency: CONCURRENCY,
 });
 
-remq.on(requestJob);
+hound.on(requestJob);
 
-await remq.start();
+await hound.start();
 
 benchmark.start();
 console.log(`\nseeded ${TOTAL_JOBS} jobs — waiting for workers to drain...\n`);
 for (let i = 0; i < TOTAL_JOBS; i++) {
-  remq.emit('request', {
+  hound.emit('request', {
     name: 'John Doe',
     email: 'john.doe@example.com',
   }, { id: `on-request-${i + 1}` });

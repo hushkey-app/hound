@@ -37,11 +37,11 @@ export class Reaper {
   /** Start the reaper. Runs one immediate sweep, then on interval. */
   start(): void {
     this.#sweep().catch((err) =>
-      console.error('[remq] Reaper sweep error:', err)
+      console.error('[hound] Reaper sweep error:', err)
     );
     this.#timer = setInterval(() => {
       this.#sweep().catch((err) =>
-        console.error('[remq] Reaper sweep error:', err)
+        console.error('[hound] Reaper sweep error:', err)
       );
     }, this.#intervalMs);
   }
@@ -63,7 +63,7 @@ export class Reaper {
         if (!stalled.length) continue;
 
         debug(
-          `[remq] Reaper: reclaiming ${stalled.length} stalled job(s) on queue '${queue}'`,
+          `[hound] Reaper: reclaiming ${stalled.length} stalled job(s) on queue '${queue}'`,
         );
 
         // Re-add stalled jobs to the queue with score=now so they run immediately
@@ -71,7 +71,7 @@ export class Reaper {
           await this.#store.requeue(queue, jobId, Date.now());
         }
       } catch (err) {
-        console.error(`[remq] Reaper error on queue '${queue}':`, err);
+        console.error(`[hound] Reaper error on queue '${queue}':`, err);
       }
     }
   }

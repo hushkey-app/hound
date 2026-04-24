@@ -103,7 +103,7 @@ export class Consumer {
               try {
                 await this.#processMessage(message);
               } catch (error) {
-                console.error(`[remq] Message ${message.id} error:`, error);
+                console.error(`[hound] Message ${message.id} error:`, error);
               }
             })();
 
@@ -111,7 +111,7 @@ export class Consumer {
             task.finally(() => this.#activeJobs.delete(task));
           }
         } catch (error) {
-          console.error('[remq] Processing loop error:', error);
+          console.error('[hound] Processing loop error:', error);
           const isTransient = this.#isTransientError(error);
           const delayMs = isTransient
             ? Math.min(
@@ -148,13 +148,13 @@ export class Consumer {
           const jobData = JSON.parse(raw);
           messages.push({ id: jobId, queue, data: jobData });
         } catch {
-          console.error(`[remq] Failed to parse job data for ${jobId}`);
+          console.error(`[hound] Failed to parse job data for ${jobId}`);
           await this.queueStore.ack(queue, jobId);
         }
       }
       return messages;
     } catch (error) {
-      console.error(`[remq] Error claiming from queue ${queue}:`, error);
+      console.error(`[hound] Error claiming from queue ${queue}:`, error);
       return [];
     }
   }
