@@ -1,13 +1,46 @@
-@import "tailwindcss";
-@plugin "daisyui" {
+@import 'tailwindcss';
+@plugin '@tailwindcss/typography'; /* Load the plugin here */
+@plugin 'daisyui' {
   themes: light --default, dark --prefersdark;
 }
 
-@plugin "daisyui/theme" {
-  name: "light";
+/* FONTS LOAD */
+/* 1. Define English Font */
+@font-face {
+  font-family: 'Varela Round';
+  src: url('/fonts/VarelaRound-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* 2. Define Japanese/Fallback Fonts */
+@font-face {
+  font-family: 'M PLUS Rounded 1c';
+  src: url('/fonts/MPLUSRounded1c-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'M PLUS Rounded 1c';
+  src: url('/fonts/MPLUSRounded1c-Medium.ttf') format('truetype');
+  font-weight: 500;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'M PLUS Rounded 1c';
+  src: url('/fonts/MPLUSRounded1c-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-display: swap;
+}
+
+@plugin 'daisyui/theme' {
+  name: 'light';
+  color-scheme: 'light';
   default: true;
   prefersdark: false;
-  color-scheme: "light";
   --color-base-100: oklch(96% 0.016 293.756);
   --color-base-200: oklch(94% 0.029 294.588);
   --color-base-300: oklch(89% 0.057 293.283);
@@ -36,6 +69,70 @@
   --border: 1px;
   --depth: 1;
   --noise: 1;
+}
+
+@theme {
+  --font-sans: 'Varela Round', 'M PLUS Rounded 1c', ui-sans-serif, system-ui, sans-serif;
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes spin-slow-reverse {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(-360deg); }
+}
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulse-ring {
+  0%, 100% { opacity: 0.15; transform: scale(1); }
+  50%       { opacity: 0.35; transform: scale(1.06); }
+}
+@keyframes orbit {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+@keyframes hue-shift {
+  0%   { filter: hue-rotate(0deg); }
+  100% { filter: hue-rotate(360deg); }
+}
+@keyframes pulsar {
+  0%   { transform: scale(1);    opacity: 0.6; }
+  100% { transform: scale(18);   opacity: 0; }
+}
+
+@layer utilities {
+  .animate-pulsar            { animation: pulsar 2.8s ease-out infinite; }
+  .animate-spin-slow         { animation: spin-slow 80s linear infinite; }
+  .animate-spin-slow-reverse { animation: spin-slow-reverse 60s linear infinite; }
+  .animate-pulse-ring        { animation: pulse-ring 3s ease-in-out infinite; }
+  .animate-orbit             { animation: orbit 4s linear infinite; }
+  .animate-hue-shift         { animation: hue-shift 6s linear infinite; }
+  .animate-fade-up-1         { animation: fade-up 0.6s ease both 0.05s; }
+  .animate-fade-up-2         { animation: fade-up 0.6s ease both 0.18s; }
+  .animate-fade-up-3         { animation: fade-up 0.6s ease both 0.30s; }
+  .animate-fade-up-4         { animation: fade-up 0.6s ease both 0.42s; }
+  .animate-fade-up-5         { animation: fade-up 0.6s ease both 0.54s; }
+  .bg-dot-grid {
+    background-image: radial-gradient(circle, oklch(var(--bc) / 0.10) 1px, transparent 1px);
+  }
+}
+
+/* DaisyUI splits comma font stacks in theme block — override here */
+:root, [data-theme] {
+  --font-sans: 'Varela Round', 'M PLUS Rounded 1c', ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  body {
+    font-family: var(--font-sans);
+    /* This ensures a smooth, rounded look across all browsers */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
 }
 
 html {
@@ -82,7 +179,7 @@ textarea,
 }
 
 .loading-indicator:before {
-  content: "";
+  content: '';
   background: #00000080;
   position: fixed;
   width: 100%;
@@ -93,7 +190,7 @@ textarea,
 }
 
 .loading-indicator:after {
-  content: " ";
+  content: ' ';
   position: fixed;
   top: 40%;
   left: 45%;

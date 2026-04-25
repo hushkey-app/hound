@@ -21,7 +21,8 @@
     "react-dom/server": "npm:preact@^10.25.0/compat",
     "tailwindcss": "npm:tailwindcss@4.1.18",
     "zod": "npm:zod@4.3.6",
-    "daisyui": "npm:daisyui@5.5.18"
+    "daisyui": "npm:daisyui@5.5.18",
+    "@tailwindcss/typography": "npm:@tailwindcss/typography@^0.5.19"
   },
   "compilerOptions": {
     "jsx": "react-jsx",

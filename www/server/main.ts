@@ -11,6 +11,10 @@ app.use(staticFiles());
 app.use(compression());
 app.use(coalesceRequests());
 
+app.get("/docs", (ctx) => {
+  return ctx.partialRedirect("/docs/getting-started");
+});
+
 // fs endpoints
 app.fsApiRoutes(apiConfig);
 app.fsClientRoutes();
