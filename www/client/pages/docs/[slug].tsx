@@ -99,22 +99,22 @@ function CodeBlock(
 ) {
   const tokens = TS_LANGS.has(lang) ? tokenize(text) : null;
   return (
-    <div class="rounded-xl overflow-hidden my-4 border border-zinc-800 text-sm">
+    <div class="rounded-xl overflow-hidden border border-zinc-800">
       {filename && (
-        <div class="bg-zinc-900 px-4 py-1.5 text-xs font-mono text-zinc-500 border-b border-zinc-800">
+        <div class="bg-zinc-900 px-4 py-2.5 text-xs font-mono text-zinc-400 border-b border-zinc-800">
           {filename}
         </div>
       )}
-      <div class="bg-zinc-950 px-5 py-4 overflow-x-auto">
-        <pre class="font-mono text-[13px] leading-relaxed whitespace-pre">
+      <div class="bg-zinc-950 px-4 sm:px-5 py-4 overflow-x-auto">
+        <pre class="font-mono text-[12px] sm:text-[13px] leading-relaxed whitespace-pre">
           {tokens
             ? tokens.map((t, i) => <span key={i} class={TOKEN_CLS[t.kind]}>{t.text}</span>)
             : <span class="text-zinc-200">{text}</span>}
         </pre>
       </div>
       {lang !== "text" && (
-        <div class="bg-zinc-900 px-4 py-1 text-right">
-          <span class="badge badge-xs badge-ghost font-mono">{lang}</span>
+        <div class="bg-zinc-900 px-4 py-2 text-right">
+          <span class="badge badge-sm badge-ghost font-mono">{lang}</span>
         </div>
       )}
     </div>
@@ -125,24 +125,26 @@ function Block({ block }: { block: BlockType }) {
   switch (block.type) {
     case "p":
       return (
-        <p class="text-base-content/80 leading-relaxed my-3">{block.text}</p>
+        <p class="text-base sm:text-base text-base-content/80 leading-relaxed my-3 px-0">{block.text}</p>
       );
 
     case "code":
       return (
-        <CodeBlock
-          lang={block.lang}
-          text={block.text}
-          filename={block.filename}
-        />
+        <div class="my-4">
+          <CodeBlock
+            lang={block.lang}
+            text={block.text}
+            filename={block.filename}
+          />
+        </div>
       );
 
     case "h3":
-      return <h3 class="text-lg font-semibold mt-6 mb-2">{block.text}</h3>;
+      return <h3 class="text-lg font-semibold mt-6 mb-2 px-0">{block.text}</h3>;
 
     case "tip":
       return (
-        <div class="alert bg-success/10 border border-success/20 my-4 text-sm">
+        <div class="alert bg-success/10 border rounded-xl border-success/20 my-4 text-sm px-5 sm:px-4 py-3">
           <span class="text-success font-semibold mr-1">Tip:</span>
           <span class="text-base-content/80">{block.text}</span>
         </div>
@@ -150,7 +152,7 @@ function Block({ block }: { block: BlockType }) {
 
     case "warning":
       return (
-        <div class="alert bg-warning/10 border border-warning/20 my-4 text-sm">
+        <div class="alert bg-warning/10 border rounded-xl border-warning/20 my-4 text-sm px-5 sm:px-4 py-3">
           <span class="text-warning font-semibold mr-1">Warning:</span>
           <span class="text-base-content/80">{block.text}</span>
         </div>
@@ -158,9 +160,9 @@ function Block({ block }: { block: BlockType }) {
 
     case "list":
       return (
-        <ul class="list-disc list-inside my-3 space-y-1.5">
+        <ul class="list-disc list-inside my-3 space-y-1.5 px-0">
           {block.items.map((item, i) => (
-            <li key={i} class="text-base-content/80 text-sm">{item}</li>
+            <li key={i} class="text-base-content/80 text-sm sm:text-sm leading-relaxed">{item}</li>
           ))}
         </ul>
       );
@@ -168,14 +170,11 @@ function Block({ block }: { block: BlockType }) {
     case "table":
       return (
         <div class="overflow-x-auto my-4 rounded-xl border border-base-300">
-          <table class="table table-sm">
+          <table class="table table-sm w-full">
             <thead>
               <tr>
                 {block.headers.map((h) => (
-                  <th
-                    key={h}
-                    class="bg-base-200 text-xs uppercase tracking-wide"
-                  >
+                  <th key={h} class="bg-base-200 text-xs uppercase tracking-wide py-3">
                     {h}
                   </th>
                 ))}
@@ -185,7 +184,7 @@ function Block({ block }: { block: BlockType }) {
               {block.rows.map((row, i) => (
                 <tr key={i} class="hover:bg-base-200/50">
                   {row.map((cell, j) => (
-                    <td key={j} class="font-mono text-xs">{cell}</td>
+                    <td key={j} class="font-mono text-xs py-3">{cell}</td>
                   ))}
                 </tr>
               ))}
@@ -207,12 +206,12 @@ function PrevNext(
   const next = idx < manifest.length - 1 ? manifest[idx + 1] : null;
 
   return (
-    <div class="flex justify-between gap-4 mt-12 pt-8 border-t border-base-300">
+    <div class="flex justify-between gap-4 mt-10 pt-6 border-t border-base-300">
       {prev
         ? (
-          <a href={`/docs/${prev.slug}`} class="group flex flex-col max-w-xs">
+          <a href={`/docs/${prev.slug}`} class="group flex flex-col max-w-xs py-2">
             <span class="text-xs text-base-content/40 mb-1">← Previous</span>
-            <span class="text-sm font-medium group-hover:text-primary transition-colors">
+            <span class="text-base font-semibold group-hover:text-primary transition-colors">
               {prev.title}
             </span>
           </a>
@@ -221,10 +220,10 @@ function PrevNext(
       {next && (
         <a
           href={`/docs/${next.slug}`}
-          class="group flex flex-col items-end max-w-xs"
+          class="group flex flex-col items-end max-w-xs py-2"
         >
           <span class="text-xs text-base-content/40 mb-1">Next →</span>
-          <span class="text-sm font-medium group-hover:text-primary transition-colors">
+          <span class="text-base font-semibold group-hover:text-primary transition-colors">
             {next.title}
           </span>
         </a>
@@ -248,26 +247,32 @@ export default function DocPage(
       <Head>
         <title>{doc.title} — Hound Docs</title>
         <meta name="description" content={doc.description} />
+        <meta property="og:title" content={`${doc.title} — Hound Docs`} />
+        <meta property="og:description" content={doc.description} />
+        <meta property="og:image" content="https://hound.hushkey.dev/og-image.png" />
+        <meta property="og:url" content={`https://hound.hushkey.dev/docs/${slug}`} />
+        <meta property="og:type" content="article" />
+        <meta name="twitter:card" content="summary_large_image" />
       </Head>
-      <article class="max-w-3xl mx-auto px-6 py-10">
+      <article class="sm:max-w-3xl sm:mx-auto sm:px-0 py-6 sm:py-10">
         {/* Page header */}
-        <div class="mb-8 pb-6 border-b border-base-300">
-          <h1 class="text-3xl font-bold tracking-tight mb-2">{doc.title}</h1>
-          <p class="text-base-content/60">{doc.description}</p>
+        <div class="mb-7 pb-5 border-b border-base-300 px-0">
+          <h1 class="text-3xl sm:text-3xl font-bold tracking-tight mb-2">{doc.title}</h1>
+          <p class="text-base text-base-content/60 leading-relaxed">{doc.description}</p>
         </div>
 
         {/* Table of contents */}
         {doc.sections.length > 2 && (
-          <div class="bg-base-200 rounded-xl p-4 mb-8 text-sm">
+          <div class="bg-base-300/60 rounded-2xl border border-base-300 p-4 mb-7 shadow-sm">
             <p class="font-semibold text-xs uppercase tracking-widest text-base-content/50 mb-2">
               On this page
             </p>
-            <ul class="space-y-1">
+            <ul class="space-y-0.5">
               {doc.sections.map((s) => (
                 <li key={s.id}>
                   <a
                     href={`#${s.id}`}
-                    class="text-base-content/60 hover:text-primary transition-colors"
+                    class="block py-1.5 text-sm text-base-content/60 hover:text-primary transition-colors"
                   >
                     {s.heading}
                   </a>
@@ -279,8 +284,8 @@ export default function DocPage(
 
         {/* Sections */}
         {doc.sections.map((section) => (
-          <section key={section.id} id={section.id} class="mb-10 scroll-mt-8">
-            <h2 class="text-xl font-semibold mb-4 flex items-center gap-2">
+          <section key={section.id} id={section.id} class="mb-10 scroll-mt-24 sm:scroll-mt-8">
+            <h2 class="text-xl sm:text-xl font-semibold mb-4 flex items-center gap-2 px-0">
               <a
                 href={`#${section.id}`}
                 class="hover:text-primary transition-colors"
@@ -292,7 +297,9 @@ export default function DocPage(
           </section>
         ))}
 
-        <PrevNext manifest={manifest} currentSlug={slug} />
+        <div class="px-0">
+          <PrevNext manifest={manifest} currentSlug={slug} />
+        </div>
       </article>
     </>
   );

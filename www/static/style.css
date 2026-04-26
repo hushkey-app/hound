@@ -207,7 +207,17 @@ textarea,
   animation: spin 2s linear infinite;
 }
 
+/* Mobile bottom-nav height token — update here when nav grows */
+:root {
+  --nav-h: 4rem; /* ~64px: py-2 + icon h-6 + gap-1 + text-[11px] label */
+}
+
 @layer utilities {
+  /* iPhone home-indicator clearance for bottom nav */
+  .safe-area-bottom {
+    padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
+  }
+
   /* Hide scrollbar while keeping scroll (horizontal strips) */
   .scrollbar-hide {
     scrollbar-width: none;
