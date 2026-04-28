@@ -112,6 +112,21 @@ export type JobHandler<
   TData = unknown,
 > = (ctx: JobContext<TApp, TData>) => Promise<void>;
 
+/**
+ * Middleware function — wraps every job handler execution.
+ * Call `next()` to continue the chain; throwing skips it and fails the job.
+ *
+ * @example
+ * hound.use(async (ctx, next) => {
+ *   const start = Date.now();
+ *   await next();
+ *   metrics.record(ctx.name, Date.now() - start);
+ * });
+ */
+export type MiddlewareFn<
+  TApp extends Record<string, unknown> = Record<string, unknown>,
+> = (ctx: JobContext<TApp, unknown>, next: () => Promise<void>) => Promise<void>;
+
 /** Options when registering a handler with `hound.on()`. */
 export interface HandlerOptions {
   /** Target queue. Defaults to 'default'. */
@@ -130,6 +145,15 @@ export interface HandlerOptions {
    * Example: { concurrency: 2 } — at most 2 instances run in parallel.
    */
   concurrency?: number;
+  /**
+   * Per-handler execution timeout in ms. If the handler (including middleware) does not
+   * resolve within this window, the job fails with a timeout error and the normal retry
+   * policy applies. Useful for handlers that call external APIs or do I/O with no built-in timeout.
+   *
+   * @example
+   * hound.on('payment.charge', handler, { timeoutMs: 8_000 });
+   */
+  timeoutMs?: number;
 }
 
 /**

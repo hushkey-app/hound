@@ -19,6 +19,7 @@ import type {
   EmitFunction,
   EmitOptions,
   HandlerOptions,
+  JobContext,
   JobData,
   JobDefinition,
   JobHandler,
@@ -26,6 +27,7 @@ import type {
   JobSocketContext,
   Message,
   MessageContext,
+  MiddlewareFn,
   ProcessableMessage,
   RedisConnection,
 } from '../../types/index.ts';
@@ -48,6 +50,7 @@ export type {
   JobDefinition,
   JobHandler,
   HoundOptions,
+  MiddlewareFn,
 } from '../../types/index.ts';
 
 /** Symbol for internal subscription. Not part of public API. */
@@ -72,9 +75,12 @@ export class Hound<
   // emits within the same millisecond are enqueued in call order, not async-resolution order.
   #emitSeq = 0;
 
+  #middleware: MiddlewareFn<TApp>[] = [];
+
   private handlers: Map<string, JobHandler<TApp, any>> = new Map();
   private handlerDebounce: Map<string, DebounceManager> = new Map();
   private handlerSemaphores: Map<string, { limit: number; active: number }> = new Map();
+  private handlerTimeouts: Map<string, number> = new Map();
   private pendingCronJobs: Map<
     string,
     {
@@ -204,6 +210,10 @@ export class Hound<
       this.handlerSemaphores.set(handlerKey, { limit: opts.concurrency, active: 0 });
     }
 
+    if (opts?.timeoutMs !== undefined && opts.timeoutMs > 0) {
+      this.handlerTimeouts.set(handlerKey, opts.timeoutMs);
+    }
+
     if (opts?.debounce !== undefined) {
       const debounceSeconds = Math.ceil(opts.debounce / 1000);
       this.handlerDebounce.set(handlerKey, new DebounceManager(debounceSeconds, undefined));
@@ -218,6 +228,23 @@ export class Hound<
       });
     }
 
+    return this;
+  }
+
+  /**
+   * Register a global middleware that wraps every job handler execution.
+   * Middleware runs in registration order; call `next()` to continue the chain.
+   * Throwing (or not calling `next()`) short-circuits the handler.
+   *
+   * @example
+   * hound.use(async (ctx, next) => {
+   *   const start = Date.now();
+   *   try { await next(); }
+   *   finally { metrics.record(ctx.name, Date.now() - start); }
+   * });
+   */
+  use(fn: MiddlewareFn<TApp>): this {
+    this.#middleware.push(fn);
     return this;
   }
 
@@ -893,7 +920,8 @@ ${'─'.repeat(40)}
         }
       }
 
-      await handler(handlerCtx);
+      const timeoutMs = this.handlerTimeouts.get(`${queueName}:${jobEntry.state.name}`);
+      await this.#runHandler(handler, handlerCtx, timeoutMs);
 
       const completedData = {
         ...processingData,
@@ -984,6 +1012,43 @@ ${'─'.repeat(40)}
 
     await this.#setJobState(stateKey, JSON.stringify(nextJobData));
     await this.queueStore.enqueue(queueName, jobId, score);
+  }
+
+  //  Middleware execution
+
+  async #runHandler(
+    handler: JobHandler<TApp, any>,
+    ctx: JobContext<TApp, any>,
+    timeoutMs?: number,
+  ): Promise<void> {
+    const run = (): Promise<void> => {
+      if (this.#middleware.length === 0) return handler(ctx);
+      let index = -1;
+      const middleware = this.#middleware;
+      const dispatch = async (i: number): Promise<void> => {
+        if (i <= index) throw new Error('[hound] next() called multiple times');
+        index = i;
+        if (i === middleware.length) return handler(ctx);
+        return middleware[i](ctx, () => dispatch(i + 1));
+      };
+      return dispatch(0);
+    };
+
+    if (!timeoutMs) return run();
+
+    let timer!: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`[hound] Job "${ctx.name}" timed out after ${timeoutMs}ms`)),
+        timeoutMs,
+      );
+    });
+
+    try {
+      return await Promise.race([run(), timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // ─── Socket context (stub) ────────────────────────────────────────────────

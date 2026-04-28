@@ -68,6 +68,7 @@ export type {
   HandlerOptions,
   // Hound options
   HoundOptions,
+  MiddlewareFn,
   JobContext,
   JobDefinition,
   JobError,
