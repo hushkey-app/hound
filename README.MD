@@ -403,15 +403,15 @@ Hound.create({
 
 ## Performance
 
-MacBook Pro 16" M1 Pro, Redis via Docker, no simulated work.
+All Redis on bare metal. MacBook Pro 16" M1 Pro, no simulated work.
 
-| Tier        | Jobs    | Concurrency | Throughput      | p50      | p95      | avg      |
-| ----------- | ------- | ----------- | --------------- | -------- | -------- | -------- |
-| baseline    | 100     | 1           | 2,474 jobs/s    | 31ms     | 41ms     | 28ms     |
-| 10 workers  | 100     | 10          | 7,966 jobs/s    | 12ms     | 14ms     | 12ms     |
-| stabilised  | 10,000  | 10          | 16,031 jobs/s   | 441ms    | 679ms    | 442ms    |
-| machine max | 10,000  | 10,000      | 33,278 jobs/s   | 226ms    | 348ms    | 230ms    |
-| ceiling     | 100,000 | 10,000      | 34,371 jobs/s   | 2,500ms  | 3,386ms  | 2,473ms  |
+| Metric      | 1c (100 jobs) | 10c (100 jobs) | max c=10,000 (100k jobs) |
+| ----------- | ------------- | -------------- | ------------------------ |
+| Throughput  | 2,474 jobs/s  | 7,966 jobs/s   | 34,371 jobs/s            |
+| Latency p50 | 31ms          | 12ms           | 2,500ms                  |
+| Latency p95 | 41ms          | 14ms           | 3,386ms                  |
+| Latency p99 | 42ms          | 14ms           | 3,462ms                  |
+| Latency avg | 28ms          | 12ms           | 2,473ms                  |
 
 ---
 

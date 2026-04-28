@@ -450,21 +450,21 @@ Hound.create({
 
 ## Performance
 
-### Benchmark (v0.50.0, 99,999 jobs, concurrency 10,000, MacBook Pro 16" M1 Pro, Redis via Docker)
+All Redis on bare metal. MacBook Pro 16" M1 Pro, no simulated work.
 
-| Metric      | InMemoryStorage  | Redis (local) |
-| ----------- | ---------------- | ------------- |
-| Throughput  | ~34,000 jobs/sec | ~511 jobs/sec |
-| Latency p50 | 0.29ms           | 18.18ms       |
-| Latency p95 | 0.48ms           | 29.77ms       |
-| Latency p99 | 0.61ms           | 29.94ms       |
-| Latency avg | 0.29ms           | 19.23ms       |
+| Metric      | 1c (100 jobs) | 10c (100 jobs) | max c=10,000 (100k jobs) |
+| ----------- | ------------- | -------------- | ------------------------ |
+| Throughput  | 2,474 jobs/s  | 7,966 jobs/s   | 34,371 jobs/s            |
+| Latency p50 | 31ms          | 12ms           | 2,500ms                  |
+| Latency p95 | 41ms          | 14ms           | 3,386ms                  |
+| Latency p99 | 42ms          | 14ms           | 3,462ms                  |
+| Latency avg | 28ms          | 12ms           | 2,473ms                  |
 
 ### Architecture comparison
 
 | Metric                   | Streams (v0.49.3) | Sorted-set (v0.50.0) |
 | ------------------------ | ----------------- | -------------------- |
-| Throughput (Redis)       | ~506 jobs/sec     | ~511 jobs/sec        |
+| Throughput (Redis, max)  | ~506 jobs/s       | ~34,371 jobs/s       |
 | At-least-once delivery   | ✓                 | ✓                    |
 | Crash recovery           | ✓ (XCLAIM / PEL)  | ✓ (Reaper)           |
 | Exponential backoff      | ✓                 | ✓                    |
