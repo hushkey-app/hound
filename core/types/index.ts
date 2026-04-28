@@ -116,6 +116,14 @@ export type JobHandler<
  * Middleware function — wraps every job handler execution.
  * Call `next()` to continue the chain; throwing skips it and fails the job.
  *
+ * IMPORTANT — semantics to know before using:
+ *  - Always `await next()`. Forgetting `await` resolves the middleware before the handler
+ *    finishes, so "after" code runs too early and the timeoutMs window is wrong.
+ *  - Skipping `next()` short-circuits the handler but the job is still marked SUCCESS
+ *    (the middleware resolved without error). If you want to fail the job, throw.
+ *  - Middleware is global — runs around every handler. Keep it cheap and side-effect-free
+ *    (logging, metrics, tracing). Don't put business logic here.
+ *
  * @example
  * hound.use(async (ctx, next) => {
  *   const start = Date.now();
@@ -149,6 +157,14 @@ export interface HandlerOptions {
    * Per-handler execution timeout in ms. If the handler (including middleware) does not
    * resolve within this window, the job fails with a timeout error and the normal retry
    * policy applies. Useful for handlers that call external APIs or do I/O with no built-in timeout.
+   *
+   * IMPORTANT — what timeout does NOT do:
+   *  - It does NOT kill the running handler. JS has no way to forcibly stop a Promise.
+   *  - The job is marked failed and a retry is scheduled, but the original handler keeps
+   *    executing in the background until its own work resolves (or never).
+   *  - For external calls, prefer libraries that accept their own timeout/AbortSignal
+   *    (e.g. `fetch(url, { signal: AbortSignal.timeout(5000) })`) so the work actually stops.
+   *  - Use `timeoutMs` as a safety net to bound *job lifecycle*, not as a way to cancel I/O.
    *
    * @example
    * hound.on('payment.charge', handler, { timeoutMs: 8_000 });

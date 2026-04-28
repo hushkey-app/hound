@@ -234,7 +234,17 @@ export class Hound<
   /**
    * Register a global middleware that wraps every job handler execution.
    * Middleware runs in registration order; call `next()` to continue the chain.
-   * Throwing (or not calling `next()`) short-circuits the handler.
+   *
+   * Intended for telemetry-shaped concerns: metrics, tracing, structured logging.
+   * Keep it cheap and side-effect-free — middleware runs around every handler on
+   * every queue, so business logic does not belong here.
+   *
+   * Semantics to know:
+   *  - Always `await next()`. Forgetting `await` resolves the middleware before the
+   *    handler finishes; "after" code runs too early and timeoutMs misbehaves.
+   *  - Throwing fails the job and the normal retry policy applies.
+   *  - Skipping `next()` (no error) short-circuits the handler but marks the job
+   *    SUCCESS, since the middleware resolved cleanly. Throw if you mean to fail it.
    *
    * @example
    * hound.use(async (ctx, next) => {
