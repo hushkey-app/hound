@@ -2,100 +2,156 @@
 // regenerate: deno task codegen
 
 import type { HoundJobMap } from './hound-types.ts';
-import type { EmitOptions, JobRecord, QueueRecord, QueueStats } from '@core/mod.ts';
+import type {
+  EmitOptions,
+  JobRecord,
+  QueueRecord,
+  QueueStats,
+} from '@hushkey/hound/mod.ts';
 
 type BoundEmitOptions = Omit<EmitOptions, 'queue'>;
 
 type EmitBatchJob = {
-  [K in keyof HoundJobMap]: { event: K; data: HoundJobMap[K]; options?: BoundEmitOptions };
+  [K in keyof HoundJobMap]: {
+    event: K;
+    data: HoundJobMap[K];
+    options?: BoundEmitOptions;
+  };
 }[keyof HoundJobMap];
 
 async function _mgmtError(method: string, res: Response): Promise<Error> {
   const body = await res.json().catch(() => ({ error: res.statusText }));
-  return new Error(`[hound-client] ${method} failed: ${(body as { error?: string }).error ?? res.statusText}`);
+  return new Error(
+    `[hound-client] ${method} failed: ${
+      (body as { error?: string }).error ?? res.statusText
+    }`,
+  );
 }
 
 class ManagementJobsClient {
-  constructor(private readonly _url: string, private readonly _h: Record<string, string>) {}
+  constructor(
+    private readonly _url: string,
+    private readonly _h: Record<string, string>,
+  ) {}
 
-  async find(options?: { queue?: string; status?: string }): Promise<JobRecord[]> {
+  async find(
+    options?: { queue?: string; status?: string },
+  ): Promise<JobRecord[]> {
     const p = new URLSearchParams();
     if (options?.queue) p.set('queue', options.queue);
     if (options?.status) p.set('status', options.status);
     const qs = p.toString() ? `?${p}` : '';
-    const res = await fetch(`${this._url}/management/jobs${qs}`, { headers: this._h });
+    const res = await fetch(`${this._url}/management/jobs${qs}`, {
+      headers: this._h,
+    });
     if (!res.ok) throw await _mgmtError('management.jobs.find', res);
     return res.json();
   }
 
   async get(queue: string, jobId: string): Promise<JobRecord | null> {
-    const res = await fetch(`${this._url}/management/jobs/${queue}/${jobId}`, { headers: this._h });
-    if (res.status === 404) { await res.body?.cancel(); return null; }
+    const res = await fetch(`${this._url}/management/jobs/${queue}/${jobId}`, {
+      headers: this._h,
+    });
+    if (res.status === 404) {
+      await res.body?.cancel();
+      return null;
+    }
     if (!res.ok) throw await _mgmtError('management.jobs.get', res);
     return res.json();
   }
 
   async delete(queue: string, jobId: string): Promise<boolean> {
-    const res = await fetch(`${this._url}/management/jobs/${queue}/${jobId}`, { method: 'DELETE', headers: this._h });
+    const res = await fetch(`${this._url}/management/jobs/${queue}/${jobId}`, {
+      method: 'DELETE',
+      headers: this._h,
+    });
     if (!res.ok) throw await _mgmtError('management.jobs.delete', res);
     const { deleted } = await res.json() as { deleted: boolean };
     return deleted;
   }
 
   async pause(queue: string, jobId: string): Promise<JobRecord | null> {
-    const res = await fetch(`${this._url}/management/jobs/${queue}/${jobId}/pause`, { method: 'POST', headers: this._h });
+    const res = await fetch(
+      `${this._url}/management/jobs/${queue}/${jobId}/pause`,
+      { method: 'POST', headers: this._h },
+    );
     if (!res.ok) throw await _mgmtError('management.jobs.pause', res);
     return res.json();
   }
 
   async resume(queue: string, jobId: string): Promise<JobRecord | null> {
-    const res = await fetch(`${this._url}/management/jobs/${queue}/${jobId}/resume`, { method: 'POST', headers: this._h });
+    const res = await fetch(
+      `${this._url}/management/jobs/${queue}/${jobId}/resume`,
+      { method: 'POST', headers: this._h },
+    );
     if (!res.ok) throw await _mgmtError('management.jobs.resume', res);
     return res.json();
   }
 
   async promote(queue: string, jobId: string): Promise<JobRecord | null> {
-    const res = await fetch(`${this._url}/management/jobs/${queue}/${jobId}/promote`, { method: 'POST', headers: this._h });
+    const res = await fetch(
+      `${this._url}/management/jobs/${queue}/${jobId}/promote`,
+      { method: 'POST', headers: this._h },
+    );
     if (!res.ok) throw await _mgmtError('management.jobs.promote', res);
     return res.json();
   }
 
   async retry(queue: string, jobId: string): Promise<JobRecord | null> {
-    const res = await fetch(`${this._url}/management/jobs/${queue}/${jobId}/retry`, { method: 'POST', headers: this._h });
+    const res = await fetch(
+      `${this._url}/management/jobs/${queue}/${jobId}/retry`,
+      { method: 'POST', headers: this._h },
+    );
     if (!res.ok) throw await _mgmtError('management.jobs.retry', res);
     return res.json();
   }
 }
 
 class ManagementQueuesClient {
-  constructor(private readonly _url: string, private readonly _h: Record<string, string>) {}
+  constructor(
+    private readonly _url: string,
+    private readonly _h: Record<string, string>,
+  ) {}
 
   async find(): Promise<QueueRecord[]> {
-    const res = await fetch(`${this._url}/management/queues`, { headers: this._h });
+    const res = await fetch(`${this._url}/management/queues`, {
+      headers: this._h,
+    });
     if (!res.ok) throw await _mgmtError('management.queues.find', res);
     return res.json();
   }
 
   async stats(queue: string): Promise<QueueStats> {
-    const res = await fetch(`${this._url}/management/queues/${queue}/stats`, { headers: this._h });
+    const res = await fetch(`${this._url}/management/queues/${queue}/stats`, {
+      headers: this._h,
+    });
     if (!res.ok) throw await _mgmtError('management.queues.stats', res);
     return res.json();
   }
 
   async pause(queue: string): Promise<void> {
-    const res = await fetch(`${this._url}/management/queues/${queue}/pause`, { method: 'POST', headers: this._h });
+    const res = await fetch(`${this._url}/management/queues/${queue}/pause`, {
+      method: 'POST',
+      headers: this._h,
+    });
     if (!res.ok) throw await _mgmtError('management.queues.pause', res);
     await res.body?.cancel();
   }
 
   async resume(queue: string): Promise<void> {
-    const res = await fetch(`${this._url}/management/queues/${queue}/resume`, { method: 'POST', headers: this._h });
+    const res = await fetch(`${this._url}/management/queues/${queue}/resume`, {
+      method: 'POST',
+      headers: this._h,
+    });
     if (!res.ok) throw await _mgmtError('management.queues.resume', res);
     await res.body?.cancel();
   }
 
   async reset(queue: string): Promise<void> {
-    const res = await fetch(`${this._url}/management/queues/${queue}/reset`, { method: 'POST', headers: this._h });
+    const res = await fetch(`${this._url}/management/queues/${queue}/reset`, {
+      method: 'POST',
+      headers: this._h,
+    });
     if (!res.ok) throw await _mgmtError('management.queues.reset', res);
     await res.body?.cancel();
   }
@@ -104,12 +160,20 @@ class ManagementQueuesClient {
 export class HoundClient {
   #url: string;
   #headers: Record<string, string>;
-  readonly management: { readonly jobs: ManagementJobsClient; readonly queues: ManagementQueuesClient };
+  readonly management: {
+    readonly jobs: ManagementJobsClient;
+    readonly queues: ManagementQueuesClient;
+  };
 
-  constructor(url: string, options?: { auth?: string; headers?: Record<string, string> }) {
+  constructor(
+    url: string,
+    options?: { auth?: string; headers?: Record<string, string> },
+  ) {
     this.#url = url.replace(/\/$/, '');
     this.#headers = { 'Content-Type': 'application/json', ...options?.headers };
-    if (options?.auth) this.#headers['Authorization'] = `Bearer ${options.auth}`;
+    if (options?.auth) {
+      this.#headers['Authorization'] = `Bearer ${options.auth}`;
+    }
     this.management = {
       jobs: new ManagementJobsClient(this.#url, this.#headers),
       queues: new ManagementQueuesClient(this.#url, this.#headers),
@@ -128,7 +192,11 @@ export class HoundClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(`[hound-client] emit failed: ${(err as { error?: string }).error ?? res.statusText}`);
+      throw new Error(
+        `[hound-client] emit failed: ${
+          (err as { error?: string }).error ?? res.statusText
+        }`,
+      );
     }
     const { jobId } = await res.json() as { jobId: string };
     return jobId;
@@ -142,7 +210,11 @@ export class HoundClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(`[hound-client] emitBatch failed: ${(err as { error?: string }).error ?? res.statusText}`);
+      throw new Error(
+        `[hound-client] emitBatch failed: ${
+          (err as { error?: string }).error ?? res.statusText
+        }`,
+      );
     }
     const { jobIds } = await res.json() as { jobIds: string[] };
     return jobIds;

@@ -115,7 +115,7 @@
         },
         {
           "type": "p",
-          "text": "After all attempts are exhausted the job moves to the dead-letter queue (if configured) or remains in the failed state for inspection."
+          "text": "After all attempts are exhausted the job is written to a queues:{queue}:{jobId}:failed:{execId} state key and stays inspectable via management.api.jobs.find({ status: 'failed' }) until processor.jobStateTtlSeconds expires."
         }
       ]
     }

@@ -1,7 +1,7 @@
 {
   "slug": "configuration",
   "title": "Configuration",
-  "description": "Full HoundOptions, processor, retry, and DLQ reference",
+  "description": "Full HoundOptions, processor, and retry reference",
   "sections": [
     {
       "id": "hound-options",
@@ -141,21 +141,21 @@
       ]
     },
     {
-      "id": "dlq",
-      "heading": "Dead-letter queue",
+      "id": "failed-jobs",
+      "heading": "Failed jobs",
       "blocks": [
         {
           "type": "p",
-          "text": "Configure a DLQ to capture jobs that have exhausted all retry attempts. Failed jobs are written to a Redis stream for later inspection or replay:"
+          "text": "Jobs that exhaust all retry attempts are written to a state key queues:{queue}:{jobId}:failed:{execId} and remain inspectable via the management API:"
         },
         {
           "type": "code",
           "lang": "ts",
-          "text": "const hound = Hound.create({\n  db: redis,\n  processor: {\n    dlq: {\n      streamKey: 'hound:dlq',\n    },\n  },\n});"
+          "text": "// Inspect\nawait management.api.jobs.find({ status: 'failed' });\n\n// Replay one\nawait management.api.jobs.retry('default:jobId');"
         },
         {
           "type": "tip",
-          "text": "Read the DLQ stream with XREAD to inspect or replay failed jobs. Each entry contains the full JobRecord serialized as a JSON string."
+          "text": "There is no separate dead-letter queue — failed jobs live in the regular state-key namespace and respect processor.jobStateTtlSeconds. A first-class DLQ with separate retention and bulk replay may be reintroduced as a feature; see ROADMAP.md."
         }
       ]
     }

@@ -1,5 +1,5 @@
 /**
- * Processor — policy layer around Consumer (retry, DLQ, ACK/NACK).
+ * Processor — policy layer around Consumer (retry, ACK/NACK).
  *
  * Delay is no longer handled here — ZADD score IS the delay. Jobs with
  * delayUntil in the future sit in the sorted set and won't be claimed
@@ -12,7 +12,6 @@ import { QueueStore } from '../consumer/queue-store.ts';
 import type {
   Message,
   MessageContext,
-  ProcessableMessage,
   ProcessorOptions,
   RedisConnection,
 } from '../../types/index.ts';
@@ -24,7 +23,6 @@ export class Processor {
   private readonly db: RedisConnection;
   private readonly queueStore: QueueStore;
   private readonly retryConfig: ProcessorOptions['retry'];
-  private readonly dlqConfig: ProcessorOptions['dlq'];
   private readonly jobStateTtlSeconds?: number;
   private readonly maxLogsPerJob?: number;
 
@@ -32,7 +30,6 @@ export class Processor {
     this.db = options.db;
     this.queueStore = new QueueStore(options.db);
     this.retryConfig = options.retry;
-    this.dlqConfig = options.dlq;
     this.jobStateTtlSeconds = options.jobStateTtlSeconds;
     this.maxLogsPerJob = options.maxLogsPerJob;
 
@@ -41,7 +38,7 @@ export class Processor {
   }
 
   /**
-   * Wrapped handler — execute → ACK on success, retry/DLQ/NACK on failure.
+   * Wrapped handler — execute → ACK on success, retry / NACK on failure.
    */
   #createWrappedHandler(
     originalHandler: ProcessorOptions['consumer']['handler'],
@@ -52,13 +49,13 @@ export class Processor {
         await ctx.ack();
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error));
-        await this.#handleFailure(message as unknown as ProcessableMessage, err, ctx);
+        await this.#handleFailure(message, err, ctx);
       }
     };
   }
 
   async #handleFailure(
-    message: ProcessableMessage,
+    message: Message,
     error: Error,
     ctx: MessageContext,
   ): Promise<void> {
@@ -106,28 +103,7 @@ export class Processor {
       return;
     }
 
-    if (this.dlqConfig?.streamKey) {
-      const shouldSend = this.dlqConfig.shouldSendToDLQ;
-      if (!shouldSend || shouldSend(message, error, retriedAttempts)) {
-        await this.#sendToDLQ(message, error, retriedAttempts);
-      }
-    }
-
     await ctx.nack(error);
-  }
-
-  async #sendToDLQ(message: ProcessableMessage, error: Error, attempts: number): Promise<void> {
-    const dlqQueue = this.dlqConfig?.streamKey ?? 'dlq';
-    const dlqData = JSON.stringify({
-      ...message.data,
-      dlqReason: error.message,
-      dlqStack: error.stack,
-      dlqTimestamp: Date.now(),
-      attempts,
-      status: 'waiting',
-    });
-    await this.#setKey(`queues:${dlqQueue}:${message.id}:waiting`, dlqData);
-    await this.queueStore.enqueue(dlqQueue, message.id, Date.now());
   }
 
   async #setKey(key: string, value: string): Promise<void> {

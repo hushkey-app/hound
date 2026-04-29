@@ -1,5 +1,57 @@
 # Changelog
 
+## [0.51.0] - 2026-04-29
+
+### Added
+
+#### `repeat.catchUp` option
+
+New boolean on `RepeatOptions` that controls how missed cron ticks are handled on restart or Reaper recovery.
+
+- `catchUp: false` (default) — missed ticks are skipped; the next natural fire runs.
+- `catchUp: true` — the missed tick is fired on recovery (legacy behaviour).
+
+```ts
+hound.on('reports.daily', handler, {
+  repeat: { pattern: '0 9 * * *', catchUp: true }, // backfill on restart
+});
+```
+
+Two guards enforce the semantics:
+
+1. **Restart preflight in `start()`** — a persisted `:delayed` cron entry whose `delayUntil` is in the past is rewritten to the next natural fire when `catchUp:false`.
+2. **Consumer-side guard in `#processJob`** — when claiming a cron job whose `delayUntil` is more than one cron interval old, the handler is skipped and the next natural tick is scheduled. Catches Reaper-resurrected entries that bypass the preflight.
+
+The existing `cron-exec` lock (keyed by `jobId + delayUntil`) is preserved as belt-and-braces dedup.
+
+**Validation:** `catchUp` is cron-only. Setting it on a non-cron job (no `repeat.pattern`) throws at `hound.on()` and `emit()`. Non-cron jobs are always recovered by the Reaper.
+
+### Changed
+
+- **Default cron behaviour for missed ticks is now `skip` (`catchUp:false`).** Previously a stalled cron entry resurrected by the Reaper would be fired immediately on next claim. Opt back in with `repeat: { catchUp: true }` for crons where every tick must run.
+
+### Removed
+
+- **`DlqConfig` type and `processor.dlq` option.** Stream-era leftover that targeted a sorted-set "DLQ" queue but was never integrated with the management API or replay tooling. Failed jobs are already captured in `:failed:{execId}` state keys and inspectable via `management.jobs.find({ status: 'failed' })` + retryable via `jobs.retry`. If a real DLQ workflow is needed (separate retention, bulk replay), it will be reintroduced as a first-class feature rather than a config flag with no consumers.
+- Removed export `DlqConfig` from public types.
+- Removed `#sendToDLQ` from `Processor`.
+- **`ProcessableMessage` internal alias.** Was `type ProcessableMessage = Message` — collapsed to `Message` in `Processor`, `Hound`, and `DebounceManager` signatures. Not part of the public API.
+
+### Architecture comparison (legacy)
+
+The pre-v0.50.0 Streams architecture vs current sorted-set:
+
+| Metric                   | Streams (v0.49.3) | Sorted-set (v0.50.0+) |
+| ------------------------ | ----------------- | --------------------- |
+| Throughput (Redis, max)  | ~506 jobs/s       | ~34,371 jobs/s        |
+| At-least-once delivery   | ✓                 | ✓                     |
+| Crash recovery           | ✓ (XCLAIM / PEL)  | ✓ (Reaper)            |
+| Exponential backoff      | ✓                 | ✓                     |
+| Queue priority           | ✓                 | ✓                     |
+| Cron restart reliability | ✓                 | ✓                     |
+| Storage backends         | Redis only        | Redis, InMemory, KV   |
+| Single connection needed | ✗ (db + streamdb) | ✓                     |
+
 ## [0.50.1] - 2026-04-25
 
 ### Added
@@ -31,19 +83,22 @@ New top-level exports. Scan `jobDirs` at build time and emit two files:
 **`hound-client.ts`** — portable `HoundClient` class (zero runtime deps) that hits the HTTP gateway. Typed via `HoundJobMap` — wrong event names and mismatched payloads are compile-time errors. Works from any runtime: Deno, Node, Bun, browser.
 
 ```ts
-import { generateTypes, generateClient } from 'jsr:@hushkey/hound';
+import { generateClient, generateTypes } from 'jsr:@hushkey/hound';
 
 const here = new URL('.', import.meta.url).pathname;
 
-await generateTypes({ jobDirs: ['../_tasks', '../_scheduled'], outputDir: '../gen' }, here);
+await generateTypes({
+  jobDirs: ['../_tasks', '../_scheduled'],
+  outputDir: '../gen',
+}, here);
 await generateClient({ outputDir: '../gen' }, here);
 ```
 
 ```ts
 // gen/hound-types.ts (auto-generated)
 export interface HoundJobMap {
-  'user.read':  { name: string; email: string };
-  'mid-world':  void;
+  'user.read': { name: string; email: string };
+  'mid-world': void;
 }
 ```
 
@@ -161,7 +216,7 @@ Redis Streams replaced with Redis sorted-set (`ZADD`) queues. `Remq` renamed to 
 - `streamdb` option removed — only `db` is required
 - `processor.streamPriority` renamed to `processor.queuePriority`
 - `processor.read.count` and `processor.read.blockMs` removed (stream-specific options)
-- `processor.dlq.streamKey` renamed to `processor.dlq.streamKey` (DLQ is now a sorted-set queue, not a stream)
+- `processor.dlq.streamKey` kept the same name but its target is now a sorted-set queue, not a Redis Stream (later removed entirely — see `0.51.0`)
 - `HoundManagement` constructor: `new HoundManagement({ db, hound })` — no `streamdb`
 
 ---
@@ -227,10 +282,18 @@ const management = new HoundManagement({ db, hound });
 
 ```ts
 // Before
-processor: { streamPriority: { payments: 1 } }
+processor: {
+  streamPriority: {
+    payments: 1;
+  }
+}
 
 // After
-processor: { queuePriority: { payments: 1 } }
+processor: {
+  queuePriority: {
+    payments: 1;
+  }
+}
 ```
 
 **Remove stream-specific options:**

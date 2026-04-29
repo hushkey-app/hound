@@ -28,7 +28,6 @@ import type {
   Message,
   MessageContext,
   MiddlewareFn,
-  ProcessableMessage,
   RedisConnection,
 } from '../../types/index.ts';
 import {
@@ -86,7 +85,7 @@ export class Hound<
     {
       event: string;
       queue: string;
-      repeat: { pattern: string };
+      repeat: { pattern: string; catchUp?: boolean };
       attempts?: number;
     }
   > = new Map();
@@ -219,11 +218,18 @@ export class Hound<
       this.handlerDebounce.set(handlerKey, new DebounceManager(debounceSeconds, undefined));
     }
 
+    if (opts?.repeat && opts.repeat.catchUp !== undefined && !opts.repeat.pattern) {
+      throw new Error(
+        `[hound] '${event}': repeat.catchUp is only valid for cron jobs. ` +
+          `Set repeat.pattern, or remove catchUp — non-cron jobs are always recovered by the Reaper.`,
+      );
+    }
+
     if (opts?.repeat?.pattern) {
       this.pendingCronJobs.set(handlerKey, {
         event,
         queue,
-        repeat: { pattern: opts.repeat.pattern },
+        repeat: { pattern: opts.repeat.pattern, catchUp: opts.repeat.catchUp },
         attempts: opts.attempts,
       });
     }
@@ -279,6 +285,13 @@ export class Hound<
     const payload = data ?? {};
 
     if (!event) throw new Error('event is required');
+
+    if (opts.repeat && opts.repeat.catchUp !== undefined && !opts.repeat.pattern) {
+      throw new Error(
+        `[hound] emit('${event}'): repeat.catchUp is only valid for cron jobs. ` +
+          `Set repeat.pattern, or remove catchUp — non-cron jobs are always recovered by the Reaper.`,
+      );
+    }
 
     const jobId = opts.id ?? genJobIdSync(event, payload);
 
@@ -609,7 +622,7 @@ ${'─'.repeat(40)}
       await this.drain();
     }
 
-    // Cron dedup — simplified: check state key, no stream scan needed
+    // Cron dedup — check state key
     for (const [, { event, queue, repeat, attempts }] of this.pendingCronJobs) {
       const jobId = genJobIdSync(event, {});
 
@@ -620,10 +633,28 @@ ${'─'.repeat(40)}
       if (existingData) {
         try {
           const existing = JSON.parse(existingData);
-          // Re-add to queue in case the sorted set was flushed (restart safety)
-          const score = (existing.delayUntil ?? Date.now()) - (existing.priority ?? 0);
-          await this.queueStore.enqueue(queue, jobId, score);
-          debug(` cron ${event}: re-registered with delayUntil=${existing.delayUntil}`);
+          const persistedCatchUp = existing.state?.options?.repeat?.catchUp ?? repeat.catchUp ?? false;
+          const persistedDelayUntil = existing.delayUntil ?? Date.now();
+          const isStale = persistedDelayUntil < Date.now();
+
+          if (isStale && !persistedCatchUp) {
+            // Skip the missed tick — schedule the next natural fire instead.
+            const nextRun = parseCronExpression(repeat.pattern).getNextDate(new Date()).getTime();
+            const refreshed = {
+              ...existing,
+              delayUntil: nextRun,
+              timestamp: Date.now(),
+            };
+            await this.#setJobState(delayedKey, JSON.stringify(refreshed));
+            const score = nextRun - (existing.priority ?? 0);
+            await this.queueStore.enqueue(queue, jobId, score);
+            debug(` cron ${event}: stale tick skipped (catchUp=false), rescheduled to ${nextRun}`);
+          } else {
+            // Re-add to queue in case the sorted set was flushed (restart safety)
+            const score = persistedDelayUntil - (existing.priority ?? 0);
+            await this.queueStore.enqueue(queue, jobId, score);
+            debug(` cron ${event}: re-registered with delayUntil=${persistedDelayUntil}`);
+          }
         } catch {
           // Corrupt state — emit fresh
           await this.emitAsync(event, {}, { queue, repeat, attempts });
@@ -767,8 +798,7 @@ ${'─'.repeat(40)}
       message: Message,
       ctx: MessageContext,
     ): Promise<void> => {
-      const msg = message as unknown as ProcessableMessage;
-      const jobData = msg.data;
+      const jobData = message.data;
 
       if (!jobData?.state?.name || !jobData?.state?.queue) {
         throw new Error(' Invalid job data: missing state.name or state.queue');
@@ -777,7 +807,7 @@ ${'─'.repeat(40)}
       const queueName = jobData.state.queue;
       const jobName = jobData.state.name!;
       const handlerKey = `${queueName}:${jobName}`;
-      const jobId = jobData.id || msg.id;
+      const jobId = jobData.id || message.id;
 
       // Pipeline pause check + job state check
       const pipe = this.db.pipeline();
@@ -831,14 +861,14 @@ ${'─'.repeat(40)}
       if (sem) sem.active++;
       try {
         if (debounceManager) {
-          if (!debounceManager.shouldProcess(msg as any)) {
+          if (!debounceManager.shouldProcess(message)) {
             await ctx.ack();
             return;
           }
           const originalHandler = handler;
           const wrappedHandler = async (c: any) => {
             await originalHandler(c);
-            debounceManager.markProcessed(msg as any);
+            debounceManager.markProcessed(message);
           };
           await this.#processJob(jobData, jobId, queueName, wrappedHandler, ctx);
         } else {
@@ -900,6 +930,24 @@ ${'─'.repeat(40)}
       const processingKey = `queues:${queueName}:${jobId}:processing`;
 
       await this.transitionState(oldKey, processingKey, JSON.stringify(processingData));
+
+      // catchUp guard — skip stale cron ticks (e.g. resurrected by Reaper after restart).
+      // When catchUp:false (default), a tick whose scheduled time is more than one interval
+      // in the past is treated as missed and dropped; the next natural fire handles it.
+      const cronPatternForCatchUp = jobEntry?.state?.options?.repeat?.pattern;
+      const cronCatchUp = jobEntry?.state?.options?.repeat?.catchUp ?? false;
+      if (cronPatternForCatchUp && jobEntry.repeatCount && !cronCatchUp) {
+        const nextRun = parseCronExpression(cronPatternForCatchUp).getNextDate(new Date()).getTime();
+        const intervalMs = nextRun - Date.now();
+        const stalenessMs = Date.now() - (jobEntry.delayUntil ?? Date.now());
+        if (stalenessMs > intervalMs) {
+          await this.db.del(processingKey);
+          await this.#scheduleCronNextTick(jobEntry, queueName);
+          await _ctx.ack();
+          debug(` cron ${jobEntry.state.name}: stale tick skipped (catchUp=false, staleness=${stalenessMs}ms)`);
+          return;
+        }
+      }
 
       const handlerCtx = {
         ...this.ctx,
@@ -992,7 +1040,7 @@ ${'─'.repeat(40)}
   ): Promise<void> {
     const state = jobEntry?.state as {
       name?: string;
-      options?: { repeat?: { pattern?: string } };
+      options?: { repeat?: { pattern?: string; catchUp?: boolean } };
     } | undefined;
     const pattern = state?.options?.repeat?.pattern;
     if (!jobEntry.repeatCount || !pattern) return;

@@ -1,6 +1,6 @@
 {
   "name": "@hushkey/hound",
-  "version": "0.50.2",
+  "version": "0.51.0",
   "description": "Deno-native job queue. Sorted-set delivery, crash recovery via Reaper, cron scheduling, and a management API.",
   "license": "MIT",
   "repository": {

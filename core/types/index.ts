@@ -43,6 +43,17 @@ export type RedisConnection = StorageClient;
 export interface RepeatOptions {
   /** Cron expression e.g. '* * * * *' (minute, hour, day of month, month, day of week). */
   pattern: string;
+  /**
+   * Cron-only flag — controls behaviour on restart / Reaper recovery for jobs scheduled via `pattern`.
+   * Has no effect on non-cron jobs (those are always recovered); setting it without `pattern` throws.
+   *
+   * - `false` (default) — missed ticks are skipped; only the next natural fire runs.
+   * - `true` — backfill: the missed tick is fired on recovery.
+   *
+   * Use `true` for crons where every tick must run (financial, compliance).
+   * Use `false` (default) for sync / cache / prebuild crons where a missed run is preferable to a double run.
+   */
+  catchUp?: boolean;
 }
 
 /** Options for `emit()` and `emitAsync()`. All fields optional. */
@@ -346,29 +357,17 @@ export interface RetryConfig {
   shouldRetry?: (error: Error, attempts: number) => boolean;
 }
 
-/** Dead-letter queue: queue name and optional filter for which failures to send. */
-export interface DlqConfig {
-  /** Queue name for dead-letter jobs (e.g. 'dlq'). */
-  streamKey?: string;
-  shouldSendToDLQ?: (
-    message: Message,
-    error: Error,
-    attempts: number,
-  ) => boolean;
-}
-
 /** Debounce configuration: window in ms and optional key function. */
 export interface DebounceConfig {
   debounce: number;
   keyFn?: (message: Message) => string;
 }
 
-/** Options for the Processor — consumer config plus retry, DLQ, and state TTL. */
+/** Options for the Processor — consumer config plus retry and state TTL. */
 export interface ProcessorOptions {
   consumer: ConsumerOptions;
   db: RedisConnection;
   retry?: RetryConfig;
-  dlq?: DlqConfig;
   debounce?: number | DebounceConfig;
   jobStateTtlSeconds?: number;
   maxLogsPerJob?: number;
@@ -428,7 +427,6 @@ export interface HoundOptions<
     /** Max messages to claim per poll cycle. Default 200. */
     claimCount?: number;
     retry?: RetryConfig;
-    dlq?: DlqConfig;
     /**
      * Queue poll priority. Lower number = higher priority (polled first).
      * Example: { payments: 1, sync: 2 }
@@ -437,7 +435,3 @@ export interface HoundOptions<
   };
 }
 
-// ─── processableMessage (internal alias) ─────────────────────────────────────
-
-/** Internal alias used in unified message handler */
-export type ProcessableMessage = Message;

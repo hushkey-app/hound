@@ -8,7 +8,7 @@
     "url": "https://github.com/mirairoad/hound"
   },
   "imports": {
-    "@core/": "../core/"
+    "@hushkey/hound/": "../core/"
   },
   "exports": {
     "./server": "./index.ts"

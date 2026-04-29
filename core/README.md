@@ -21,7 +21,7 @@ hound.emit('email.send', { to: 'leo@hushkey.jp' });
 ## Installation
 
 ```ts
-import { Hound } from 'jsr:@hushkey/hound@^0.50.0';
+import { Hound } from 'jsr:@hushkey/hound@^0.51.0';
 ```
 
 ---
@@ -263,7 +263,6 @@ const hound = Hound.create({ db: await DenoKvStorage.open() });
 | `processor.queuePriority`       | `Record<string, number>`   | Poll order across queues. Lower = higher priority                     |
 | `processor.retry.retryDelayMs`  | `number`                   | Global retry delay override                                           |
 | `processor.retry.retryBackoff`  | `'fixed' \| 'exponential'` | Global backoff override                                               |
-| `processor.dlq.streamKey`       | `string`                   | Dead letter queue name                                                |
 
 ---
 
@@ -297,6 +296,34 @@ hound.on('reports.daily', async (ctx) => {
   repeat: { pattern: '0 9 * * *' }, // every day at 9am
 });
 ```
+
+### `catchUp` — restart / recovery semantics
+
+`repeat.catchUp` controls what happens to a missed cron tick when the worker restarts or the Reaper resurrects a stalled cron entry:
+
+- `catchUp: false` (default) — missed ticks are skipped. The next natural fire handles them.
+- `catchUp: true` — the missed tick is fired on recovery (backfill once).
+
+```ts
+// Sync / cache / prebuild — running twice is worse than skipping once
+hound.on('cache.warm', handler, {
+  repeat: { pattern: '*/5 * * * *' }, // catchUp:false implicit
+});
+
+// Financial / compliance — every tick must run
+hound.on('reports.daily', handler, {
+  repeat: { pattern: '0 9 * * *', catchUp: true },
+});
+```
+
+Two guards enforce this:
+
+1. **Restart preflight** ([`start()`](libs/hound/mod.ts)) — if a persisted `:delayed` cron entry has a `delayUntil` in the past and `catchUp:false`, it is rewritten to the next natural fire before being requeued.
+2. **Consumer-side guard** ([`#processJob`](libs/hound/mod.ts)) — when claiming a cron job whose `delayUntil` is more than one cron interval old, the handler is skipped, the next natural tick is scheduled, and the job is acked. This catches Reaper-resurrected entries that bypass the preflight.
+
+The existing `cron-exec` lock (keyed by `jobId + delayUntil`) remains in place as a belt-and-braces dedup against parallel claims of the same tick.
+
+`catchUp` is **cron-only**. Setting it on a non-cron job (no `repeat.pattern`) throws at `hound.on()` or `emit()` time. Non-cron jobs are always recovered by the Reaper.
 
 ---
 
@@ -460,18 +487,7 @@ All Redis on bare metal. MacBook Pro 16" M1 Pro, no simulated work.
 | Latency p99 | 42ms          | 14ms           | 3,462ms                  |
 | Latency avg | 28ms          | 12ms           | 2,473ms                  |
 
-### Architecture comparison
-
-| Metric                   | Streams (v0.49.3) | Sorted-set (v0.50.0) |
-| ------------------------ | ----------------- | -------------------- |
-| Throughput (Redis, max)  | ~506 jobs/s       | ~34,371 jobs/s       |
-| At-least-once delivery   | ✓                 | ✓                    |
-| Crash recovery           | ✓ (XCLAIM / PEL)  | ✓ (Reaper)           |
-| Exponential backoff      | ✓                 | ✓                    |
-| Queue priority           | ✓                 | ✓                    |
-| Cron restart reliability | ✓                 | ✓                    |
-| Storage backends         | Redis only        | Redis, InMemory, KV  |
-| Single connection needed | ✗ (db + streamdb) | ✓                    |
+For the v0.49.x → v0.50.x migration (Streams → sorted-set, ~67× throughput), see `CHANGELOG.md`.
 
 ---
 

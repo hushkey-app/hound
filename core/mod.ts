@@ -58,7 +58,6 @@ export type {
   // Benchmarking
   BenchmarkOptions,
   BenchmarkResult,
-  DlqConfig,
   EmitAndWaitFunction,
   EmitAsyncFunction,
   // Emit function shapes

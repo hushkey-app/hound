@@ -56,7 +56,7 @@
   {
     "slug": "configuration",
     "title": "Configuration",
-    "description": "Full HoundOptions, processor, retry, and DLQ reference",
+    "description": "Full HoundOptions, processor, and retry reference",
     "order": 10
   }
 ]

@@ -3,14 +3,14 @@
  *
  * @module
  */
+import type { Message } from '../../types/index.ts';
+
 /**
  * Manages debouncing of message processing. Tracks recently processed messages to prevent duplicates.
  */
 export class DebounceManager {
   private readonly windowMs: number;
-  private readonly keyFn: (
-    message: { id: string; data?: unknown; [key: string]: unknown },
-  ) => string;
+  private readonly keyFn: (message: Message) => string;
   private readonly processedKeys = new Map<string, number>();
 
   /**
@@ -20,9 +20,7 @@ export class DebounceManager {
    */
   constructor(
     windowSeconds: number,
-    keyFn?: (
-      message: { id: string; data?: unknown; [key: string]: unknown },
-    ) => string,
+    keyFn?: (message: Message) => string,
   ) {
     this.windowMs = windowSeconds * 1000;
     this.keyFn = keyFn || ((msg) => msg.id);
@@ -32,9 +30,7 @@ export class DebounceManager {
    * Checks if message should be processed (not debounced)
    * Returns true if message should be processed, false if debounced
    */
-  shouldProcess(
-    message: { id: string; data?: unknown; [key: string]: unknown },
-  ): boolean {
+  shouldProcess(message: Message): boolean {
     const key = this.keyFn(message);
     const lastProcessed = this.processedKeys.get(key);
 
@@ -59,9 +55,7 @@ export class DebounceManager {
   /**
    * Marks a message as processed (updates debounce timestamp)
    */
-  markProcessed(
-    message: { id: string; data?: unknown; [key: string]: unknown },
-  ): void {
+  markProcessed(message: Message): void {
     const key = this.keyFn(message);
     this.processedKeys.set(key, Date.now());
   }

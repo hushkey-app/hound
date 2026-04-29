@@ -1,5 +1,5 @@
-import { Hound, InMemoryStorage } from '@core/mod.ts';
-import type { RedisConnection } from '@core/types/index.ts';
+import { Hound, InMemoryStorage } from '@hushkey/hound/mod.ts';
+import type { RedisConnection } from '@hushkey/hound/types/index.ts';
 
 const REDIS_URL = Deno.env.get('REDIS_URL');
 

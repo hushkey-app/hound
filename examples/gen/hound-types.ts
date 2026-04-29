@@ -5,7 +5,7 @@ import type { midWorldJob } from '../_scheduled/mid-world.job.ts';
 import type { endWorldJob } from '../_scheduled/end-world.job.ts';
 import type { startWorldJob } from '../_scheduled/start-world.job.ts';
 import type { userReadJob } from '../_tasks/request.job.ts';
-import type { JobDefinition } from '@core/mod.ts';
+import type { JobDefinition } from '@hushkey/hound/mod.ts';
 
 type _Data<T> = T extends JobDefinition<any, infer D> ? D : never;
 

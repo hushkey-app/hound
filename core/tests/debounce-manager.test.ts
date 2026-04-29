@@ -2,7 +2,8 @@ import { assertEquals } from 'jsr:@std/assert';
 import { DebounceManager } from '../libs/processor/debounce-manager.ts';
 import { sleep } from './helpers.ts';
 
-const msg = (id: string, data: Record<string, unknown> = {}) => ({ id, data });
+const msg = (id: string, data: Record<string, unknown> = {}) =>
+  ({ id, queue: 'default', data }) as unknown as import('../types/index.ts').Message;
 
 Deno.test('DebounceManager: allows first-ever call (no history)', () => {
   const dm = new DebounceManager(60);

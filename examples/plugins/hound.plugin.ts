@@ -1,6 +1,6 @@
-import { Hound, HoundManagement, InMemoryStorage } from '@core/mod.ts';
-import type { RedisConnection } from '@core/types/index.ts';
-import type { TypedHound } from '@core/mod.ts';
+import { Hound, HoundManagement, InMemoryStorage } from '@hushkey/hound/mod.ts';
+import type { RedisConnection } from '@hushkey/hound/types/index.ts';
+import type { TypedHound } from '@hushkey/hound/mod.ts';
 import type { HoundJobMap } from '../gen/hound-types.ts';
 
 const REDIS_URL = Deno.env.get('REDIS_URL');
@@ -21,7 +21,9 @@ if (REDIS_URL) {
   db = redis as RedisConnection;
   console.log('[hound] Using Redis');
 } else if (DENO_KV !== undefined) {
-  const { DenoKvStorage } = await import('@core/libs/storage/deno-kv.ts');
+  const { DenoKvStorage } = await import(
+    '@hushkey/hound/libs/storage/deno-kv.ts'
+  );
   db = await DenoKvStorage.open(DENO_KV || undefined);
   console.log('[hound] Using Deno KV' + (DENO_KV ? ` (${DENO_KV})` : ''));
 } else {

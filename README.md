@@ -29,7 +29,7 @@ hound.emit("email.send", { to: "leo@hushkey.jp" });
 ## Installation
 
 ```ts
-import { Hound } from "jsr:@hushkey/hound@^0.50.0";
+import { Hound } from "jsr:@hushkey/hound@^0.51.0";
 ```
 
 ---
@@ -245,7 +245,6 @@ const hound = Hound.create({ db: await DenoKvStorage.open() });
 | `processor.queuePriority`       | `Record<string, number>`   | Poll order across queues. Lower = higher priority                     |
 | `processor.retry.retryDelayMs`  | `number`                   | Global retry delay override                                           |
 | `processor.retry.retryBackoff`  | `'fixed' \| 'exponential'` | Global backoff override                                               |
-| `processor.dlq.streamKey`       | `string`                   | Dead letter queue name                                                |
 
 ---
 
@@ -278,6 +277,23 @@ hound.on("reports.daily", async (ctx) => {
 }, {
   queue: "scheduled",
   repeat: { pattern: "0 9 * * *" }, // every day at 9am
+});
+```
+
+### `catchUp` — restart / recovery
+
+`repeat.catchUp` controls missed-tick behaviour on restart or Reaper recovery:
+
+- `catchUp: false` (default) — missed ticks are skipped; the next natural fire runs.
+- `catchUp: true` — backfill the missed tick once.
+
+```ts
+// Default (skip missed ticks)
+hound.on("cache.warm", handler, { repeat: { pattern: "*/5 * * * *" } });
+
+// Critical — backfill on recovery
+hound.on("reports.daily", handler, {
+  repeat: { pattern: "0 9 * * *", catchUp: true },
 });
 ```
 
