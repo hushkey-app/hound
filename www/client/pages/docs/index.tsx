@@ -12,7 +12,10 @@ export default function DocsIndex(ctx: PageProps<unknown, State>): JSX.Element {
     <>
       <Head>
         <title>{title} — Documentation</title>
-        <meta name="description" content={`Guides and reference for ${title}.`} />
+        <meta
+          name="description"
+          content={`Guides and reference for ${title}.`}
+        />
       </Head>
 
       <div class="sm:max-w-3xl sm:mx-auto sm:px-6">
@@ -24,8 +27,8 @@ export default function DocsIndex(ctx: PageProps<unknown, State>): JSX.Element {
             {title} Docs
           </h1>
           <p class="text-base sm:text-lg text-base-content/70 sm:text-base-content/60 leading-relaxed">
-            Edit JSON files under <code class="font-mono text-primary">server/docs/</code>{" "}
-            to author documentation. Each file becomes a routed page.
+            Guides and reference for Hound job queue installation, defining
+            jobs, cron, retries, storage backends, and the management API.
           </p>
         </div>
 

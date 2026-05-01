@@ -155,7 +155,7 @@ export default function Index(ctx: Context<State>): JSX.Element {
               </span>
             </h1>
             <p class="mt-3 text-base-content/50 text-sm tracking-[0.25em] uppercase font-bold">
-              Web Framework · Type-Safe · Deno
+              Job Queue · Type-Safe · Deno
             </p>
           </div>
 
