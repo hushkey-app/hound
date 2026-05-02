@@ -60,6 +60,63 @@ class DenoKvPipeline {
   }
 }
 
+/**
+ * Atomic transaction — backed by Deno KV's native `kv.atomic()`. All staged
+ * ops commit in a single atomic operation or none commit. Mirrors Redis
+ * MULTI/EXEC semantics for the Deno KV backend.
+ */
+class DenoKvTransaction {
+  readonly #kv: Deno.Kv;
+  readonly #ops: Array<{ apply: (a: Deno.AtomicOperation) => void }> = [];
+
+  constructor(kv: Deno.Kv) {
+    this.#kv = kv;
+  }
+
+  // deno-lint-ignore no-explicit-any
+  set(key: string, value: string, ...args: any[]): this {
+    let ttlMs: number | undefined;
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === 'EX') ttlMs = Number(args[++i]) * 1000;
+      else if (args[i] === 'PX') ttlMs = Number(args[++i]);
+    }
+    const opts: { expireIn?: number } = {};
+    if (ttlMs !== undefined) opts.expireIn = ttlMs;
+    this.#ops.push({ apply: (a) => a.set(['kv', key], value, opts) });
+    return this;
+  }
+
+  del(...keys: string[]): this {
+    for (const key of keys) {
+      this.#ops.push({ apply: (a) => a.delete(['kv', key]) });
+    }
+    return this;
+  }
+
+  zadd(key: string, score: number, member: string): this {
+    this.#ops.push({ apply: (a) => a.set(['zset', key, member], score) });
+    return this;
+  }
+
+  zrem(key: string, ...members: string[]): this {
+    for (const member of members) {
+      this.#ops.push({ apply: (a) => a.delete(['zset', key, member]) });
+    }
+    return this;
+  }
+
+  async exec(): Promise<[Error | null, unknown][]> {
+    const atomic = this.#kv.atomic();
+    for (const op of this.#ops) op.apply(atomic);
+    const result = await atomic.commit();
+    if (!result.ok) {
+      throw new Error('DenoKv atomic transaction failed to commit');
+    }
+    // All ops committed atomically — return shape compatible with ioredis multi().exec()
+    return this.#ops.map(() => [null, 'OK'] as [Error | null, unknown]);
+  }
+}
+
 export class DenoKvStorage {
   readonly #kv: Deno.Kv;
 
@@ -242,8 +299,8 @@ export class DenoKvStorage {
     return new DenoKvPipeline(this);
   }
 
-  multi(): DenoKvPipeline {
-    return new DenoKvPipeline(this);
+  multi(): DenoKvTransaction {
+    return new DenoKvTransaction(this.#kv);
   }
 
   // ─── Lifecycle ─────────────────────────────────────────────────────────────

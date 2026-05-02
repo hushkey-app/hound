@@ -69,6 +69,55 @@ class InMemoryPipeline {
   }
 }
 
+/**
+ * Atomic transaction — all-or-nothing. Snapshots store state before exec;
+ * if any op throws, restores the snapshot and re-throws. Mirrors Redis
+ * MULTI/EXEC semantics for the in-memory backend.
+ */
+class InMemoryTransaction {
+  readonly #store: InMemoryStorage;
+  readonly #ops: Array<() => Promise<unknown>> = [];
+
+  constructor(store: InMemoryStorage) {
+    this.#store = store;
+  }
+
+  // deno-lint-ignore no-explicit-any
+  set(key: string, value: string, ...args: any[]): this {
+    this.#ops.push(() => this.#store.set(key, value, ...args));
+    return this;
+  }
+
+  del(...keys: string[]): this {
+    this.#ops.push(() => this.#store.del(...keys));
+    return this;
+  }
+
+  zrem(key: string, ...members: string[]): this {
+    this.#ops.push(() => this.#store.zrem(key, ...members));
+    return this;
+  }
+
+  zadd(key: string, score: number, member: string): this {
+    this.#ops.push(() => this.#store.zadd(key, score, member));
+    return this;
+  }
+
+  async exec(): Promise<[Error | null, unknown][]> {
+    const snapshot = this.#store._snapshot();
+    const results: [Error | null, unknown][] = [];
+    try {
+      for (const op of this.#ops) {
+        results.push([null, await op()]);
+      }
+      return results;
+    } catch (err) {
+      this.#store._restore(snapshot);
+      throw err instanceof Error ? err : new Error(String(err));
+    }
+  }
+}
+
 export class InMemoryStorage {
   readonly #kv = new Map<string, KvEntry>();
   readonly #zsets = new Map<string, ZEntry[]>();
@@ -211,8 +260,8 @@ export class InMemoryStorage {
     return new InMemoryPipeline(this);
   }
 
-  multi(): InMemoryPipeline {
-    return new InMemoryPipeline(this);
+  multi(): InMemoryTransaction {
+    return new InMemoryTransaction(this);
   }
 
   // ─── Lifecycle ─────────────────────────────────────────────────────────────
@@ -225,6 +274,25 @@ export class InMemoryStorage {
   flushAll(): void {
     this.#kv.clear();
     this.#zsets.clear();
+  }
+
+  // ─── Snapshot / restore — used by InMemoryTransaction for atomic exec ──────
+
+  /** @internal */
+  _snapshot(): { kv: Map<string, KvEntry>; zsets: Map<string, ZEntry[]> } {
+    const kv = new Map<string, KvEntry>();
+    for (const [k, v] of this.#kv) kv.set(k, { ...v });
+    const zsets = new Map<string, ZEntry[]>();
+    for (const [k, v] of this.#zsets) zsets.set(k, v.map((e) => ({ ...e })));
+    return { kv, zsets };
+  }
+
+  /** @internal */
+  _restore(snapshot: { kv: Map<string, KvEntry>; zsets: Map<string, ZEntry[]> }): void {
+    this.#kv.clear();
+    for (const [k, v] of snapshot.kv) this.#kv.set(k, v);
+    this.#zsets.clear();
+    for (const [k, v] of snapshot.zsets) this.#zsets.set(k, v);
   }
 
   // ─── Internals ─────────────────────────────────────────────────────────────

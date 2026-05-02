@@ -241,13 +241,23 @@ class JobsApi {
       );
     }
 
-    const promoted = { ...job, delayUntil: Date.now(), lockUntil: Date.now() };
-    await this.db.set(`queues:${job.queue}:${job.id}:${job.status}`, JSON.stringify(promoted));
+    // Mutate the raw stored payload (not the JobRecord projection from get(),
+    // which lacks state.name/queue/options and would corrupt the state record).
+    const stateKey = `queues:${job.queue}:${job.id}:${job.status}`;
+    const raw = await this.db.get(stateKey);
+    if (!raw) return null;
+    const payload = JSON.parse(raw) as Record<string, unknown>;
+    const now = Date.now();
+    payload.delayUntil = now;
+    payload.lockUntil = now;
+    await this.db.set(stateKey, JSON.stringify(payload));
 
-    // Re-enqueue with score=now to run immediately
-    this.hound.emit(job.name, job.data, { queue: job.queue, id: job.id, delay: new Date() });
+    // Re-enqueue with score=now. Use enqueueJob (not emit) to preserve cron
+    // metadata (repeat.pattern, repeatCount, status='delayed') — emit() rebuilds
+    // the payload and would kill the cron recurrence.
+    await this.hound.enqueueJob(job.queue, payload);
 
-    return promoted;
+    return { ...job, delayUntil: now, lockUntil: now };
   }
 
   async pause(key: string): Promise<JobRecord | null> {

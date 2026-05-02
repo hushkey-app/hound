@@ -10,14 +10,17 @@ import { makeDb } from './helpers.ts';
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 let jobSeq = 0;
-function mockHound(opts: { failOn?: string } = {}) {
+type CapturedBatch = { event: string; data?: unknown; options?: unknown };
+function mockHound(opts: { failOn?: string; capture?: { batch?: CapturedBatch[] } } = {}) {
   return {
     emitAsync: async (event: string) => {
       if (opts.failOn === event) throw new Error(`forced failure on ${event}`);
       return `job-${++jobSeq}-${event}`;
     },
-    emitBatch: async (jobs: Array<{ event: string }>) =>
-      jobs.map((j) => `job-${++jobSeq}-${j.event}`),
+    emitBatch: async (jobs: CapturedBatch[]) => {
+      if (opts.capture?.batch) opts.capture.batch.push(...jobs);
+      return jobs.map((j) => `job-${++jobSeq}-${j.event}`);
+    },
   } as any;
 }
 
@@ -125,6 +128,44 @@ Deno.test('POST /emit/batch returns 400 when body is not an array', () =>
     const body = await res.json() as { error: string };
     assert(body.error.includes('array'));
   }));
+
+Deno.test('POST /emit/batch returns 400 with offending index when entry missing event', () =>
+  withGateway(mockHound(), undefined, async (base) => {
+    const res = await fetch(`${base}/emit/batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify([
+        { event: 'order.placed', data: { id: 1 } },
+        { data: { id: 2 } },
+      ]),
+    });
+    assertEquals(res.status, 400);
+    const body = await res.json() as { error: string };
+    assert(body.error.includes('jobs[1]'), `expected error to reference jobs[1], got: ${body.error}`);
+  }));
+
+Deno.test('POST /emit/batch forwards data + options to hound.emitBatch unchanged', () => {
+  const captured: CapturedBatch[] = [];
+  return withGateway(mockHound({ capture: { batch: captured } }), undefined, async (base) => {
+    const res = await fetch(`${base}/emit/batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify([
+        {
+          event: 'order.placed',
+          data: { orderId: 42 },
+          options: { queue: 'priority', priority: 10, attempts: 3 },
+        },
+      ]),
+    });
+    assertEquals(res.status, 200);
+    await res.body?.cancel();
+    assertEquals(captured.length, 1);
+    assertEquals(captured[0].event, 'order.placed');
+    assertEquals(captured[0].data, { orderId: 42 });
+    assertEquals(captured[0].options, { queue: 'priority', priority: 10, attempts: 3 });
+  });
+});
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
