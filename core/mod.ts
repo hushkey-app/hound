@@ -60,8 +60,10 @@ export type {
   BenchmarkResult,
   EmitAndWaitFunction,
   EmitAsyncFunction,
-  // Emit function shapes
+  // Emit
   EmitBatchEntry,
+  EmitBatchFunction,
+  // Emit function shapes
   EmitFunction,
   EmitOptions,
   // Handlers

@@ -327,6 +327,55 @@ Deno.test('ctx.logger appends log entries without throwing', () =>
     await h.emitAndWait('log.test', {}, { timeoutMs: 3000 }); // should not throw
   }));
 
+// ─── emitBatch ───────────────────────────────────────────────────────────────
+
+Deno.test('emitBatch returns one jobId per entry in order', () =>
+  withHound(async (h) => {
+    h.on('batch.a', async () => {});
+    h.on('batch.b', async () => {});
+    const ids = await h.emitBatch([
+      { event: 'batch.a', data: { n: 1 } },
+      { event: 'batch.b', data: { n: 2 } },
+      { event: 'batch.a', data: { n: 3 } },
+    ]);
+    assertEquals(ids.length, 3);
+    assert(ids.every((id) => typeof id === 'string' && id.length > 0));
+  }));
+
+Deno.test('emitBatch returns [] for empty input', () =>
+  withHound(async (h) => {
+    const ids = await h.emitBatch([]);
+    assertEquals(ids, []);
+  }));
+
+Deno.test('emitBatch jobs are all processed', () =>
+  withHound(async (h) => {
+    const N = 10;
+    let count = 0;
+    let resolve!: () => void;
+    const done = new Promise<void>((r) => { resolve = r; });
+
+    h.on('batch.count', async () => {
+      if (++count === N) resolve();
+    });
+    await h.start();
+
+    const ids = await h.emitBatch(
+      Array.from({ length: N }, (_, i) => ({ event: 'batch.count', data: { i } })),
+    );
+    assertEquals(ids.length, N);
+    await done;
+    assertEquals(count, N);
+  }));
+
+Deno.test('emitBatch same payload produces same deterministic id as emitAsync', () =>
+  withHound(async (h) => {
+    h.on('batch.dedup', async () => {});
+    const [batchId] = await h.emitBatch([{ event: 'batch.dedup', data: { x: 42 } }]);
+    const singleId = await h.emitAsync('batch.dedup', { x: 42 });
+    assertEquals(batchId, singleId);
+  }));
+
 // ─── Multiple jobs, correct throughput ───────────────────────────────────────
 
 Deno.test('processes N jobs in parallel up to concurrency limit', () =>
