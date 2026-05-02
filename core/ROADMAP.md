@@ -1,6 +1,6 @@
 # Roadmap
 
-_Last updated: 29/04/2026_
+_Last updated: 01/05/2026_
 
 Use checkboxes. Append `— done DD/MM/YYYY HH:MM` when ticking an item.
 
@@ -27,6 +27,17 @@ Use checkboxes. Append `— done DD/MM/YYYY HH:MM` when ticking an item.
   - Hot-path keyspace isolation during failure spikes
 - [ ] If reintroduced: design as a first-class queue with management API integration, not a config flag.
 
+## v0.51.0 shipped
+
+- [x] `repeat.catchUp` — cron jobs no longer auto-recover on restart/Reaper by default (`catchUp: false`); opt in with `catchUp: true` for financial/compliance crons — _done 29/04/2026_
+- [x] Remove dead `ctx.socket` docs (README + handlers.json) — stub always threw since `expose` was removed in v0.50.0 — _done 01/05/2026_
+
 ## Other
 
-- [ ] 
+- [ ] Remove `ctx.socket` public surface — `JobSocketContext` type, `socket` field on `JobContext`, and the `ctx.socket.update()` stub in `core/libs/hound/mod.ts`. The `expose` option was removed in v0.50.0; the type is now a documentation lie — _added 01/05/2026_
+- [x] `hound.emitBatch(jobs)` — emit multiple jobs atomically in a single Redis pipeline call. The gateway `/emit/batch` endpoint already existed; added `emitBatch()` to the Hound class, updated the gateway to use it, and added `EmitBatchEntry` to public types — _done 01/05/2026_
+- [ ] Pipeline batching for ZADD bursts — when many jobs are emitted in a tight loop, batch them in a single ioredis pipeline instead of individual round trips. Investigate the threshold at which batching yields measurable throughput gains — _added 01/05/2026_
+- [ ] OpenTelemetry middleware — a `hound.use()` middleware (or example plugin) that emits OTEL spans per job (duration, retry count, queue, status) and queue-depth metrics via the management events. Enables off-the-shelf Grafana/Datadog dashboards — _added 01/05/2026_
+- [ ] Per-event rate limiting — `HandlerOptions.rateLimit: { maxPerSecond: number }` to cap handler execution rate without relying on debounce. Useful for outbound API calls with rate limits (Stripe, SendGrid) — _added 01/05/2026_
+- [ ] Node.js / Bun native adapter — Hound currently requires Deno (`Deno.serve`, `Deno.env`, `Deno.Kv`). A thin compatibility package would let teams run the worker in Node or Bun. The generated `HoundClient` already works in any runtime; the gap is the worker side — _added 01/05/2026_
+- [ ] Job progress / streaming — a way to push incremental progress from a running handler to a caller waiting via `emitAndWait`. Needs a design pass: lightweight approach might be periodic state-key writes that the waiter polls; richer approach is a pub/sub channel per job — _added 01/05/2026_

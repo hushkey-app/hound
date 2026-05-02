@@ -91,9 +91,10 @@ export function createGateway(options: GatewayOptions): Deno.HttpServer<Deno.Net
             options?: EmitOptions;
           }>;
           if (!Array.isArray(jobs)) return json({ error: 'body must be an array' }, 400);
-          const jobIds = await Promise.all(
-            jobs.map((j) => hound.emitAsync(j.event, j.data, j.options)),
-          );
+          for (let i = 0; i < jobs.length; i++) {
+            if (!jobs[i]?.event) return json({ error: `jobs[${i}].event is required` }, 400);
+          }
+          const jobIds = await hound.emitBatch(jobs);
           return json({ jobIds });
         }
 

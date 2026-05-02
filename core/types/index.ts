@@ -31,6 +31,8 @@ export interface StorageClient {
   ): Promise<[string, string[]]>;
   // deno-lint-ignore no-explicit-any
   pipeline(): any;
+  // deno-lint-ignore no-explicit-any
+  multi(): any;
   disconnect(): void;
 }
 
@@ -78,6 +80,13 @@ export interface EmitOptions {
   priority?: number;
 }
 
+/** A single entry in an `emitBatch()` call. */
+export interface EmitBatchEntry {
+  event: string;
+  data?: unknown;
+  options?: EmitOptions;
+}
+
 // ─── Handler ─────────────────────────────────────────────────────────────────
 
 /**
@@ -113,6 +122,8 @@ export type JobContext<
   emitAsync: EmitAsyncFunction;
   /** Emit and wait for the job to complete. Rejects on failure or timeout. */
   emitAndWait: EmitAndWaitFunction;
+  /** Batch emit — all jobs written in a single MULTI/EXEC transaction. */
+  emitBatch: EmitBatchFunction;
   /** WebSocket context. Only available when hound is started with expose option. */
   socket: JobSocketContext;
 };
@@ -220,6 +231,9 @@ export type EmitAndWaitFunction = (
   data?: unknown,
   options?: EmitOptions & { timeoutMs?: number },
 ) => Promise<string>;
+
+/** Batch emit — writes all jobs in a single MULTI/EXEC transaction. Returns jobIds in order. */
+export type EmitBatchFunction = (jobs: EmitBatchEntry[]) => Promise<string[]>;
 
 /** Options for hound.benchmark(). */
 export interface BenchmarkOptions {

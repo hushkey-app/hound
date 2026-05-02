@@ -16,6 +16,8 @@ import type {
   BenchmarkResult,
   EmitAndWaitFunction,
   EmitAsyncFunction,
+  EmitBatchEntry,
+  EmitBatchFunction,
   EmitFunction,
   EmitOptions,
   HandlerOptions,
@@ -42,6 +44,8 @@ export type {
   BenchmarkResult,
   EmitAndWaitFunction,
   EmitAsyncFunction,
+  EmitBatchEntry,
+  EmitBatchFunction,
   EmitFunction,
   EmitOptions,
   HandlerOptions,
@@ -65,6 +69,7 @@ export class Hound<
   private readonly ctx: TApp & {
     emit: EmitFunction;
     emitAsync: EmitAsyncFunction;
+    emitBatch: EmitBatchFunction;
   };
   private readonly concurrency: number;
   private readonly processorOptions: HoundOptions<TApp>['processor'];
@@ -132,7 +137,8 @@ export class Hound<
       emit: this.emit.bind(this),
       emitAsync: this.emitAsync.bind(this),
       emitAndWait: this.emitAndWait.bind(this),
-    } as TApp & { emit: EmitFunction; emitAsync: EmitAsyncFunction; emitAndWait: EmitAndWaitFunction };
+      emitBatch: this.emitBatch.bind(this),
+    } as TApp & { emit: EmitFunction; emitAsync: EmitAsyncFunction; emitAndWait: EmitAndWaitFunction; emitBatch: EmitBatchFunction };
 
     this.auth = options.auth;
     this.importMeta = options.importMeta;
@@ -392,6 +398,41 @@ export class Hound<
 
     this.emit(event, data, { ...emitOpts, id: jobId });
     return waitPromise;
+  }
+
+  async emitBatch(jobs: EmitBatchEntry[]): Promise<string[]> {
+    if (!jobs.length) return [];
+
+    const chunkSize = this.processorOptions?.claimCount ?? 200;
+    const ttl = this.processorOptions?.jobStateTtlSeconds;
+    const allIds: string[] = [];
+
+    for (let i = 0; i < jobs.length; i += chunkSize) {
+      const chunk = jobs.slice(i, i + chunkSize);
+      const payloads = chunk.map(({ event, data, options }) =>
+        this.#buildPayload(event, data, options)
+      );
+
+      const tx = this.db.multi();
+      for (const [, , stateKey, dataJson] of payloads) {
+        if (typeof ttl === 'number' && ttl > 0) {
+          tx.set(stateKey, dataJson, 'EX', ttl);
+        } else {
+          tx.set(stateKey, dataJson);
+        }
+      }
+      for (const [jobId, queue, , , score] of payloads) {
+        tx.zadd(`queues:${queue}:q`, score, jobId);
+      }
+
+      const results = await tx.exec() as [Error | null, unknown][];
+      const failed = results.find(([err]) => err !== null);
+      if (failed) throw failed[0]!;
+
+      allIds.push(...payloads.map(([jobId]) => jobId));
+    }
+
+    return allIds;
   }
 
   async benchmark(config: BenchmarkOptions): Promise<BenchmarkResult> {

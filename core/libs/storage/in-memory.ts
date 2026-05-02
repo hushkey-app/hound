@@ -205,9 +205,13 @@ export class InMemoryStorage {
     return ['0', [...new Set([...kvKeys, ...zKeys])]];
   }
 
-  // ─── Pipeline ──────────────────────────────────────────────────────────────
+  // ─── Pipeline / Multi ──────────────────────────────────────────────────────
 
   pipeline(): InMemoryPipeline {
+    return new InMemoryPipeline(this);
+  }
+
+  multi(): InMemoryPipeline {
     return new InMemoryPipeline(this);
   }
 

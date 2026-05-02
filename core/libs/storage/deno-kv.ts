@@ -236,9 +236,13 @@ export class DenoKvStorage {
     return ['0', [...keys]];
   }
 
-  // ─── Pipeline ──────────────────────────────────────────────────────────────
+  // ─── Pipeline / Multi ──────────────────────────────────────────────────────
 
   pipeline(): DenoKvPipeline {
+    return new DenoKvPipeline(this);
+  }
+
+  multi(): DenoKvPipeline {
     return new DenoKvPipeline(this);
   }
 

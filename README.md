@@ -144,6 +144,13 @@ const jobId = hound.emit("property.sync", { propertyId: 1 });
 
 // Awaitable — resolves when state key + queue entry are both written
 const jobId = await hound.emitAsync("property.sync", { propertyId: 1 });
+
+// Batch — all jobs in a single Redis pipeline (one round trip)
+const jobIds = await hound.emitBatch([
+  { event: "email.send", data: { to: "alice@example.com" } },
+  { event: "email.send", data: { to: "bob@example.com" } },
+  { event: "analytics.track", data: { event: "signup" }, options: { queue: "analytics" } },
+]);
 ```
 
 ### Emit options
@@ -156,7 +163,7 @@ const jobId = await hound.emitAsync("property.sync", { propertyId: 1 });
 | `attempts`     | `number`                   | Max retry attempts                                          |
 | `retryDelayMs` | `number`                   | Delay between retries in ms. Default `1000`                 |
 | `retryBackoff` | `'fixed' \| 'exponential'` | Backoff strategy. Default `'fixed'`                         |
-| `repeat`       | `{ pattern: string }`      | Cron expression — makes job self-scheduling                 |
+| `repeat`       | `{ pattern: string; catchUp?: boolean }` | Cron expression — makes job self-scheduling     |
 | `priority`     | `number`                   | Higher = processed first. Default `0`                       |
 
 ---
@@ -177,7 +184,6 @@ hound.on('property.sync', async (ctx) => {
   ctx.emit(...)       // fire and forget from handler
   ctx.emitAsync(...)  // awaitable emit from handler
   ctx.emitAndWait(...)// emit and block until the job completes
-  ctx.socket.update() // WebSocket progress update (requires hound.listen())
 })
 ```
 
@@ -187,7 +193,7 @@ hound.on('property.sync', async (ctx) => {
 | -------------- | -------------------------- | --------------------------------- |
 | `queue`        | `string`                   | Target queue. Default `'default'` |
 | `attempts`     | `number`                   | Max retry attempts                |
-| `repeat`       | `{ pattern: string }`      | Cron expression                   |
+| `repeat`       | `{ pattern: string; catchUp?: boolean }` | Cron expression (`catchUp` defaults to `false`) |
 | `debounce`     | `number`                   | Debounce window in ms             |
 | `retryBackoff` | `'fixed' \| 'exponential'` | Backoff strategy                  |
 
@@ -316,28 +322,6 @@ hound.emit("payment.process", { amount: 100 }, {
 ```ts
 const management = new HoundManagement({ db, hound });
 hound.listen(4000, management);
-```
-
-### WebSocket progress
-
-```ts
-// Handler — send progress updates to connected clients
-hound.on("video.encode", async (ctx) => {
-  await encodeChunk(1);
-  ctx.socket.update({ progress: 33 });
-  await encodeChunk(2);
-  ctx.socket.update({ progress: 66 });
-  await encodeChunk(3);
-  ctx.socket.update({ progress: 100 });
-});
-
-// Client
-const ws = new WebSocket("ws://localhost:4000");
-ws.send(JSON.stringify({ event: "video.encode", data: { id: 1 } }));
-ws.onmessage = ({ data }) => console.log(JSON.parse(data));
-// { type: 'queued', jobId: '...' }
-// { type: 'job_update', progress: 33, ... }
-// { type: 'job_finished', status: 'completed', ... }
 ```
 
 ---
