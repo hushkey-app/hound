@@ -315,6 +315,91 @@ Deno.test('emitBatch same payload produces same deterministic ids as individual 
     assertEquals(batchId, singleId);
   }));
 
+Deno.test('emitBatch rejects when a backend op throws — and rolls back the chunk (no orphan state keys)', () =>
+  withHound(async (h, db) => {
+    h.on('batch.fail', async () => {});
+
+    // Inject a failure mid-transaction by wrapping db.set to throw on the 3rd call.
+    // Each emitBatch entry stages one set (state key) + one zadd, so set #3 falls
+    // inside the transaction and triggers InMemoryTransaction's snapshot rollback.
+    let setCallCount = 0;
+    const origSet = db.set.bind(db);
+    (db as any).set = async (key: string, value: string, ...args: unknown[]) => {
+      setCallCount++;
+      if (setCallCount === 3) throw new Error('forced set failure');
+      return await origSet(key, value, ...(args as []));
+    };
+
+    await assertRejects(
+      () => h.emitBatch([
+        { event: 'batch.fail', data: { i: 1 } },
+        { event: 'batch.fail', data: { i: 2 } },
+        { event: 'batch.fail', data: { i: 3 } },
+      ]),
+      Error,
+      'forced set failure',
+    );
+
+    (db as any).set = origSet;
+
+    // No orphan state keys for any of the 3 jobs that were in the failed chunk
+    const [, keys] = await db.scan(0, 'MATCH', 'queues:default:*:waiting', 'COUNT', 1000);
+    assertEquals(keys.length, 0, `expected zero orphan state keys, got ${keys.length}`);
+  }));
+
+Deno.test('emitBatch applies jobStateTtlSeconds to every state key', () =>
+  withHound(async (h, db) => {
+    h.on('batch.ttl', async () => {});
+    const ids = await h.emitBatch([
+      { event: 'batch.ttl', data: { i: 1 } },
+      { event: 'batch.ttl', data: { i: 2 } },
+    ]);
+
+    // helpers.ts sets jobStateTtlSeconds: 60 — verify state keys exist now
+    for (const id of ids) {
+      const v = await db.get(`queues:default:${id}:waiting`);
+      assert(v !== null, `state key for ${id} should exist`);
+    }
+  }, { processor: { pollIntervalMs: 50, jobStateTtlSeconds: 1 } }));
+
+Deno.test('emitBatch chunks at claimCount and returns all ids in order', () =>
+  withHound(async (h) => {
+    h.on('batch.chunk', async () => {});
+    const N = 25;
+    const ids = await h.emitBatch(
+      Array.from({ length: N }, (_, i) => ({ event: 'batch.chunk', data: { i } })),
+    );
+    assertEquals(ids.length, N);
+    // All unique (different data → different deterministic ids)
+    assertEquals(new Set(ids).size, N);
+  }, { processor: { pollIntervalMs: 50, jobStateTtlSeconds: 60, claimCount: 5 } }));
+
+Deno.test('ctx.emitBatch is available inside a handler and enqueues children', () =>
+  withHound(async (h) => {
+    let childCount = 0;
+    let resolve!: () => void;
+    const done = new Promise<void>((r) => { resolve = r; });
+
+    h.on('child.task', async () => {
+      if (++childCount === 4) resolve();
+    });
+
+    h.on('parent.fanout', async (ctx: any) => {
+      assert(typeof ctx.emitBatch === 'function', 'ctx.emitBatch must be defined');
+      await ctx.emitBatch([
+        { event: 'child.task', data: { i: 1 } },
+        { event: 'child.task', data: { i: 2 } },
+        { event: 'child.task', data: { i: 3 } },
+        { event: 'child.task', data: { i: 4 } },
+      ]);
+    });
+
+    await h.start();
+    h.emit('parent.fanout', {});
+    await done;
+    assertEquals(childCount, 4);
+  }));
+
 // ─── ctx.logger ──────────────────────────────────────────────────────────────
 
 Deno.test('ctx.logger appends log entries without throwing', () =>

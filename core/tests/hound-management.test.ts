@@ -273,6 +273,45 @@ Deno.test('jobs.promote: sets delayUntil to now and re-enqueues delayed job', ()
     assert(promoted.delayUntil <= Date.now() + 10);
   }));
 
+Deno.test('jobs.promote: cron job runs early and recurrence survives', () =>
+  withHound(async (hound, db) => {
+    let runs = 0;
+    hound.on('cron.event', async () => { runs++; });
+    await hound.start();
+
+    // Seed a cron tick scheduled far in the future.
+    const future = Date.now() + 60_000;
+    await seedJob(db, 'default', 'cron-1', 'delayed', {
+      delayUntil: future,
+      lockUntil: future,
+      repeatCount: 1,
+      state: {
+        name: 'cron.event',
+        queue: 'default',
+        data: {},
+        options: { repeat: { pattern: '*/5 * * * *', catchUp: false } },
+      },
+    });
+
+    const m = new HoundManagement({ db, hound });
+    const promoted = await m.api.jobs.promote('default:cron-1');
+    assert(promoted !== null);
+    assert(promoted.delayUntil <= Date.now() + 10);
+
+    // Job should run once via promotion.
+    await sleep(500);
+    assertEquals(runs, 1);
+
+    // After running, #scheduleCronNextTick should re-seed a future delayed entry
+    // for the same id (cron recurrence preserved — emit() would have killed it).
+    const next = await db.get('queues:default:cron-1:delayed');
+    assert(next !== null, 'cron recurrence missing — next tick was not scheduled');
+    const parsed = JSON.parse(next);
+    assertEquals(parsed.repeatCount, 1);
+    assert(parsed.delayUntil > Date.now(), 'next tick should be in the future');
+    assertEquals(parsed.state.options.repeat.pattern, '*/5 * * * *');
+  }));
+
 // ─── jobs.retry() ─────────────────────────────────────────────────────────────
 
 Deno.test('jobs.retry: throws without Hound instance', async () => {

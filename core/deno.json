@@ -5,7 +5,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mirairoad/hound"
+    "url": "https://github.com/hushkey-app/hound"
   },
   "exports": "./mod.ts",
   "tasks": {

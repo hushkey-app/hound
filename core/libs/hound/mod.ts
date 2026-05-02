@@ -400,6 +400,17 @@ export class Hound<
     return waitPromise;
   }
 
+  /**
+   * Emit many jobs in atomic chunks. Each chunk is one MULTI/EXEC transaction —
+   * either every job in the chunk lands in Redis or none do. On rejection, no
+   * jobs in the failed chunk were enqueued; jobs from prior chunks (already
+   * resolved) are durable. Safe to retry — jobIds are deterministic.
+   *
+   * Internally chunks at `processorOptions.claimCount` (default 200) so a 10k
+   * batch fans out into ~50 transactions instead of one unbounded pipeline.
+   *
+   * @throws if any chunk's transaction is discarded or any op fails.
+   */
   async emitBatch(jobs: EmitBatchEntry[]): Promise<string[]> {
     if (!jobs.length) return [];
 
@@ -425,7 +436,10 @@ export class Hound<
         tx.zadd(`queues:${queue}:q`, score, jobId);
       }
 
-      const results = await tx.exec() as [Error | null, unknown][];
+      // ioredis multi().exec() returns null when the transaction is discarded
+      // (WATCH conflict, connection drop mid-EXEC). Treat as full-batch failure.
+      const results = await tx.exec() as [Error | null, unknown][] | null;
+      if (!results) throw new Error('emitBatch: transaction discarded');
       const failed = results.find(([err]) => err !== null);
       if (failed) throw failed[0]!;
 
@@ -1004,6 +1018,7 @@ ${'─'.repeat(40)}
         emit: this.emit.bind(this),
         emitAsync: this.emitAsync.bind(this),
         emitAndWait: this.emitAndWait.bind(this),
+        emitBatch: this.emitBatch.bind(this),
         socket: this.#createSocketContext(jobId, jobEntry.state.name!, jobEntry.state.queue!),
       };
 

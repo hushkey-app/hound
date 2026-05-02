@@ -17,7 +17,7 @@
           "rows": [
             ["emit()", "string (jobId)", "Nothing — fire and forget"],
             ["emitAsync()", "Promise<string>", "Job to be written to storage"],
-            ["emitBatch(jobs)", "Promise<string[]>", "All jobs to be written to storage in a single pipeline"],
+            ["emitBatch(jobs)", "Promise<string[]>", "All jobs in a chunk to be written atomically (MULTI/EXEC) — all-or-nothing"],
             [
               "emitAndWait()",
               "Promise<string>",
@@ -67,7 +67,7 @@
       "blocks": [
         {
           "type": "p",
-          "text": "Emit multiple jobs in a single Redis pipeline call. All state key writes and queue ZADDs are batched together — N jobs cost one round trip instead of N:"
+          "text": "Emit multiple jobs in atomic chunks. Each chunk is a single MULTI/EXEC transaction — every state key write and queue ZADD in the chunk lands in storage, or none do. N jobs cost one round trip per chunk instead of N round trips total:"
         },
         {
           "type": "code",
@@ -80,7 +80,15 @@
         },
         {
           "type": "p",
-          "text": "emitBatch() is also available on the generated HoundClient for typed, cross-runtime batch emission over the HTTP gateway."
+          "text": "Atomicity is enforced on every backend: ioredis uses native MULTI/EXEC, Deno KV uses kv.atomic(), and InMemoryStorage snapshots state and rolls back on any failure. If emitBatch() rejects, no jobs in the failed chunk landed — safe to retry, since job IDs are deterministic (same event + data → same id)."
+        },
+        {
+          "type": "p",
+          "text": "Large batches are chunked internally at processorOptions.claimCount (default 200) so a 10k emit fans out into ~50 atomic transactions instead of one unbounded pipeline that would block Redis for other clients."
+        },
+        {
+          "type": "p",
+          "text": "emitBatch() is available on ctx inside handlers (alongside emit, emitAsync, emitAndWait), on the top-level hound instance, and on the generated HoundClient for typed, cross-runtime batch emission over the HTTP gateway."
         }
       ]
     },
