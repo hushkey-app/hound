@@ -9,7 +9,7 @@
       "blocks": [
         {
           "type": "p",
-          "text": "Hound exposes three emission methods depending on how much you need to know about a job's fate:"
+          "text": "Hound exposes four emission methods depending on how much you need to know about a job's fate:"
         },
         {
           "type": "table",
@@ -17,9 +17,10 @@
           "rows": [
             ["emit()", "string (jobId)", "Nothing — fire and forget"],
             ["emitAsync()", "Promise<string>", "Job to be written to storage"],
+            ["emitBatch(jobs)", "Promise<string[]>", "All jobs to be written to storage in a single pipeline"],
             [
               "emitAndWait()",
-              "Promise<JobRecord>",
+              "Promise<string>",
               "Job to reach a terminal state"
             ]
           ]
@@ -57,6 +58,29 @@
           "type": "code",
           "lang": "ts",
           "text": "const jobId = await hound.emitAsync('order.process', { orderId: '123' });\nconsole.log('Job persisted:', jobId);"
+        }
+      ]
+    },
+    {
+      "id": "emit-batch",
+      "heading": "emitBatch()",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Emit multiple jobs in a single Redis pipeline call. All state key writes and queue ZADDs are batched together — N jobs cost one round trip instead of N:"
+        },
+        {
+          "type": "code",
+          "lang": "ts",
+          "text": "const jobIds = await hound.emitBatch([\n  { event: 'email.send', data: { to: 'alice@example.com' } },\n  { event: 'email.send', data: { to: 'bob@example.com' } },\n  { event: 'analytics.track', data: { event: 'signup' }, options: { queue: 'analytics' } },\n]);\nconsole.log(jobIds); // ['abc...', 'def...', 'ghi...']"
+        },
+        {
+          "type": "tip",
+          "text": "Each entry accepts the same options as emitAsync(). Jobs from different events or queues can be mixed freely in a single batch."
+        },
+        {
+          "type": "p",
+          "text": "emitBatch() is also available on the generated HoundClient for typed, cross-runtime batch emission over the HTTP gateway."
         }
       ]
     },

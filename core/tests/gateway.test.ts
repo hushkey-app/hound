@@ -16,6 +16,8 @@ function mockHound(opts: { failOn?: string } = {}) {
       if (opts.failOn === event) throw new Error(`forced failure on ${event}`);
       return `job-${++jobSeq}-${event}`;
     },
+    emitBatch: async (jobs: Array<{ event: string }>) =>
+      jobs.map((j) => `job-${++jobSeq}-${j.event}`),
   } as any;
 }
 

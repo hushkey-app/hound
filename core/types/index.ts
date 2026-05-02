@@ -78,6 +78,13 @@ export interface EmitOptions {
   priority?: number;
 }
 
+/** A single entry in an `emitBatch()` call. */
+export interface EmitBatchEntry {
+  event: string;
+  data?: unknown;
+  options?: EmitOptions;
+}
+
 // ─── Handler ─────────────────────────────────────────────────────────────────
 
 /**

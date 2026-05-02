@@ -56,11 +56,6 @@
               "ctx.emitAndWait(...)",
               "Promise<JobRecord>",
               "Emit and await terminal state"
-            ],
-            [
-              "ctx.socket.update(data)",
-              "void",
-              "Push a WebSocket progress update"
             ]
           ]
         }

@@ -61,6 +61,7 @@ export type {
   EmitAndWaitFunction,
   EmitAsyncFunction,
   // Emit function shapes
+  EmitBatchEntry,
   EmitFunction,
   EmitOptions,
   // Handlers

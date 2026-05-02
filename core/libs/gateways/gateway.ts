@@ -91,9 +91,7 @@ export function createGateway(options: GatewayOptions): Deno.HttpServer<Deno.Net
             options?: EmitOptions;
           }>;
           if (!Array.isArray(jobs)) return json({ error: 'body must be an array' }, 400);
-          const jobIds = await Promise.all(
-            jobs.map((j) => hound.emitAsync(j.event, j.data, j.options)),
-          );
+          const jobIds = await hound.emitBatch(jobs);
           return json({ jobIds });
         }
 

@@ -16,6 +16,7 @@ import type {
   BenchmarkResult,
   EmitAndWaitFunction,
   EmitAsyncFunction,
+  EmitBatchEntry,
   EmitFunction,
   EmitOptions,
   HandlerOptions,
@@ -358,6 +359,31 @@ export class Hound<
     await this.queueStore.enqueue(queue, jobId, score);
 
     return jobId;
+  }
+
+  async emitBatch(jobs: EmitBatchEntry[]): Promise<string[]> {
+    if (!jobs.length) return [];
+
+    const payloads = jobs.map(({ event, data, options }) =>
+      this.#buildPayload(event, data, options)
+    );
+
+    const ttl = this.processorOptions?.jobStateTtlSeconds;
+    const pipe = this.db.pipeline();
+
+    for (const [, , stateKey, dataJson] of payloads) {
+      if (typeof ttl === 'number' && ttl > 0) {
+        pipe.set(stateKey, dataJson, 'EX', ttl);
+      } else {
+        pipe.set(stateKey, dataJson);
+      }
+    }
+    for (const [jobId, queue, , , score] of payloads) {
+      pipe.zadd(`queues:${queue}:q`, score, jobId);
+    }
+
+    await pipe.exec();
+    return payloads.map(([jobId]) => jobId);
   }
 
   #ensureJobWaiterListener(): void {
