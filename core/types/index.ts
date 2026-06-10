@@ -16,7 +16,11 @@ export interface StorageClient {
   set(key: string, value: string, ...args: any[]): Promise<any>;
   del(...keys: string[]): Promise<number>;
   zadd(key: string, score: number, member: string): Promise<number | string>;
-  zrangebyscore(key: string, min: number | string, max: number | string): Promise<string[]>;
+  zrangebyscore(
+    key: string,
+    min: number | string,
+    max: number | string,
+  ): Promise<string[]>;
   zrem(key: string, ...members: string[]): Promise<number>;
   zcard(key: string): Promise<number>;
   zscore(key: string, member: string): Promise<string | null>;
@@ -64,8 +68,8 @@ export interface EmitOptions {
   queue?: string;
   /** Explicit job ID. If omitted, derived from event + payload via FNV-1a. */
   id?: string;
-  /** Delay until this date before processing. */
-  delay?: Date;
+  /** Delay processing until this Date or epoch-ms timestamp. */
+  delay?: Date | number;
   /** Cron repeat pattern. Makes the job self-scheduling. */
   repeat?: RepeatOptions;
   /** Number of retry attempts on failure. */
@@ -155,7 +159,10 @@ export type JobHandler<
  */
 export type MiddlewareFn<
   TApp extends Record<string, unknown> = Record<string, unknown>,
-> = (ctx: JobContext<TApp, unknown>, next: () => Promise<void>) => void | Promise<void>;
+> = (
+  ctx: JobContext<TApp, unknown>,
+  next: () => Promise<void>,
+) => void | Promise<void>;
 
 /** Options when registering a handler with `hound.on()`. */
 export interface HandlerOptions {
@@ -165,7 +172,10 @@ export interface HandlerOptions {
   repeat?: RepeatOptions;
   /** Max retry attempts. */
   attempts?: number;
-  /** Debounce window in ms. */
+  /**
+   * Debounce window in ms. Per-process: tracking state lives in this worker's
+   * memory, so multiple workers on the same queue do not share debounce state.
+   */
   debounce?: number;
   /** Retry backoff strategy. */
   retryBackoff?: 'fixed' | 'exponential';
@@ -448,4 +458,3 @@ export interface HoundOptions<
     queuePriority?: Record<string, number>;
   };
 }
-

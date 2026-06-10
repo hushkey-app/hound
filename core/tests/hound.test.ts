@@ -2,17 +2,17 @@
  * Hound integration tests — run against InMemoryStorage, no Redis needed.
  * All tests within this file run sequentially (Deno default).
  */
-import { assert, assertEquals, assertRejects } from 'jsr:@std/assert';
+import { assert, assertEquals, assertRejects } from 'jsr:@std/assert@1';
 import { Hound } from '../libs/hound/mod.ts';
 import { defineJob } from '../mod.ts';
-import { withHound, sleep } from './helpers.ts';
+import { sleep, withHound } from './helpers.ts';
 
 // ─── Emit ─────────────────────────────────────────────────────────────────────
 
 Deno.test('emit returns a non-empty jobId synchronously', () => {
   Hound._reset();
   const { hound } = (() => {
-    const db = (new (class {})() as any); // not needed for this check
+    const db = new (class {})() as any; // not needed for this check
     return { hound: null as any };
   })();
   // Use withHound so singleton is managed
@@ -72,7 +72,9 @@ Deno.test('same event on the same queue is idempotent — no throw', () =>
 Deno.test('job runs and completes end-to-end', () =>
   withHound(async (h) => {
     let called = false;
-    h.on('e2e.complete', async () => { called = true; });
+    h.on('e2e.complete', async () => {
+      called = true;
+    });
     await h.start();
     await h.emitAndWait('e2e.complete', {}, { timeoutMs: 3000 });
     assertEquals(called, true);
@@ -81,7 +83,9 @@ Deno.test('job runs and completes end-to-end', () =>
 Deno.test('handler receives correct ctx (name, queue, data, status)', () =>
   withHound(async (h) => {
     let ctx: any;
-    h.on('e2e.ctx', async (c) => { ctx = c; }, { queue: 'myq' });
+    h.on('e2e.ctx', async (c) => {
+      ctx = c;
+    }, { queue: 'myq' });
     await h.start();
     await h.emitAndWait('e2e.ctx', { answer: 42 }, { timeoutMs: 3000 });
     assertEquals(ctx.name, 'e2e.ctx');
@@ -92,7 +96,9 @@ Deno.test('handler receives correct ctx (name, queue, data, status)', () =>
 
 Deno.test('emitAndWait rejects when the job handler throws', () =>
   withHound(async (h) => {
-    h.on('e2e.fail', async () => { throw new Error('intentional failure'); });
+    h.on('e2e.fail', async () => {
+      throw new Error('intentional failure');
+    });
     await h.start();
     await assertRejects(
       () => h.emitAndWait('e2e.fail', {}, { timeoutMs: 3000 }),
@@ -117,7 +123,9 @@ Deno.test('emitAndWait times out when processor is not started', () =>
 Deno.test('emit auto-resolves queue from handler registration', () =>
   withHound(async (h) => {
     let receivedQueue = '';
-    h.on('auto.q', async (ctx: any) => { receivedQueue = ctx.queue; }, { queue: 'fastlane' });
+    h.on('auto.q', async (ctx: any) => {
+      receivedQueue = ctx.queue;
+    }, { queue: 'fastlane' });
     await h.start();
     await h.emitAndWait('auto.q', {}, { timeoutMs: 3000 });
     assertEquals(receivedQueue, 'fastlane');
@@ -135,7 +143,12 @@ Deno.test('job retried N times then permanently fails', () =>
     });
     await h.start();
     await assertRejects(
-      () => h.emitAndWait('retry.exhaust', {}, { attempts: 2, retryDelayMs: 10, timeoutMs: 5000 }),
+      () =>
+        h.emitAndWait('retry.exhaust', {}, {
+          attempts: 2,
+          retryDelayMs: 10,
+          timeoutMs: 5000,
+        }),
       Error,
     );
     assertEquals(attempts, 3); // 1 initial + 2 retries
@@ -149,7 +162,11 @@ Deno.test('job succeeds after retries', () =>
       if (attempts < 3) throw new Error('not yet');
     });
     await h.start();
-    await h.emitAndWait('retry.success', {}, { attempts: 3, retryDelayMs: 10, timeoutMs: 5000 });
+    await h.emitAndWait('retry.success', {}, {
+      attempts: 3,
+      retryDelayMs: 10,
+      timeoutMs: 5000,
+    });
     assertEquals(attempts, 3);
   }));
 
@@ -170,7 +187,10 @@ Deno.test('exponential backoff increases delay between retries', () =>
     // Gap between attempt 2 and 3 should be roughly 2x the gap between 1 and 2
     const gap1 = timestamps[1] - timestamps[0];
     const gap2 = timestamps[2] - timestamps[1];
-    assert(gap2 > gap1, `expected exponential growth: gap1=${gap1}ms gap2=${gap2}ms`);
+    assert(
+      gap2 > gap1,
+      `expected exponential growth: gap1=${gap1}ms gap2=${gap2}ms`,
+    );
   }));
 
 // ─── Per-handler concurrency ──────────────────────────────────────────────────
@@ -188,8 +208,13 @@ Deno.test('per-handler concurrency cap is respected', () =>
 
     await h.start();
     // Emit 6 jobs with unique IDs so they're treated as separate jobs
-    const jobs = Array.from({ length: 6 }, () =>
-      h.emitAndWait('concur.cap', {}, { id: crypto.randomUUID(), timeoutMs: 5000 })
+    const jobs = Array.from(
+      { length: 6 },
+      () =>
+        h.emitAndWait('concur.cap', {}, {
+          id: crypto.randomUUID(),
+          timeoutMs: 5000,
+        }),
     );
     await Promise.all(jobs);
 
@@ -216,7 +241,9 @@ Deno.test('higher priority jobs are processed before lower priority', () =>
   withHound(async (h) => {
     const order: number[] = [];
     let resolve!: () => void;
-    const allDone = new Promise<void>((r) => { resolve = r; });
+    const allDone = new Promise<void>((r) => {
+      resolve = r;
+    });
     let count = 0;
 
     h.on('prio.test', async (ctx: any) => {
@@ -227,9 +254,9 @@ Deno.test('higher priority jobs are processed before lower priority', () =>
     // Emit all 3 BEFORE starting the processor so they land in the queue simultaneously.
     // emitAndWait is deliberately avoided here — re-ZADDing the same jobs would alter their
     // scores and could break the priority ordering we're trying to verify.
-    await h.emitAsync('prio.test', { p: 1 },  { id: 'p1',  priority: 1  });
+    await h.emitAsync('prio.test', { p: 1 }, { id: 'p1', priority: 1 });
     await h.emitAsync('prio.test', { p: 10 }, { id: 'p10', priority: 10 });
-    await h.emitAsync('prio.test', { p: 5 },  { id: 'p5',  priority: 5  });
+    await h.emitAsync('prio.test', { p: 5 }, { id: 'p5', priority: 5 });
 
     await h.start();
     await allDone;
@@ -244,7 +271,9 @@ Deno.test('higher priority jobs are processed before lower priority', () =>
 Deno.test('delayed job is not processed before delayUntil', () =>
   withHound(async (h) => {
     let ran = false;
-    h.on('delay.test', async () => { ran = true; });
+    h.on('delay.test', async () => {
+      ran = true;
+    });
     await h.start();
 
     h.emit('delay.test', {}, { delay: new Date(Date.now() + 5_000) });
@@ -257,8 +286,12 @@ Deno.test('delayed job is not processed before delayUntil', () =>
 Deno.test('handler can chain follow-up jobs via ctx.emitAsync', () =>
   withHound(async (h) => {
     let chainRan = false;
-    h.on('chain.start', async (ctx: any) => { await ctx.emitAsync('chain.end', {}); });
-    h.on('chain.end', async () => { chainRan = true; });
+    h.on('chain.start', async (ctx: any) => {
+      await ctx.emitAsync('chain.end', {});
+    });
+    h.on('chain.end', async () => {
+      chainRan = true;
+    });
 
     await h.start();
     await h.emitAndWait('chain.start', {}, { timeoutMs: 3000 });
@@ -292,7 +325,9 @@ Deno.test('emitBatch jobs are all processed', () =>
     const N = 10;
     let count = 0;
     let resolve!: () => void;
-    const done = new Promise<void>((r) => { resolve = r; });
+    const done = new Promise<void>((r) => {
+      resolve = r;
+    });
 
     h.on('batch.count', async () => {
       if (++count === N) resolve();
@@ -300,7 +335,10 @@ Deno.test('emitBatch jobs are all processed', () =>
     await h.start();
 
     const ids = await h.emitBatch(
-      Array.from({ length: N }, (_, i) => ({ event: 'batch.count', data: { i } })),
+      Array.from(
+        { length: N },
+        (_, i) => ({ event: 'batch.count', data: { i } }),
+      ),
     );
     assertEquals(ids.length, N);
     await done;
@@ -310,7 +348,10 @@ Deno.test('emitBatch jobs are all processed', () =>
 Deno.test('emitBatch same payload produces same deterministic ids as individual emitAsync', () =>
   withHound(async (h) => {
     h.on('batch.dedup', async () => {});
-    const [batchId] = await h.emitBatch([{ event: 'batch.dedup', data: { x: 42 } }]);
+    const [batchId] = await h.emitBatch([{
+      event: 'batch.dedup',
+      data: { x: 42 },
+    }]);
     const singleId = await h.emitAsync('batch.dedup', { x: 42 });
     assertEquals(batchId, singleId);
   }));
@@ -324,18 +365,23 @@ Deno.test('emitBatch rejects when a backend op throws — and rolls back the chu
     // inside the transaction and triggers InMemoryTransaction's snapshot rollback.
     let setCallCount = 0;
     const origSet = db.set.bind(db);
-    (db as any).set = async (key: string, value: string, ...args: unknown[]) => {
+    (db as any).set = async (
+      key: string,
+      value: string,
+      ...args: unknown[]
+    ) => {
       setCallCount++;
       if (setCallCount === 3) throw new Error('forced set failure');
       return await origSet(key, value, ...(args as []));
     };
 
     await assertRejects(
-      () => h.emitBatch([
-        { event: 'batch.fail', data: { i: 1 } },
-        { event: 'batch.fail', data: { i: 2 } },
-        { event: 'batch.fail', data: { i: 3 } },
-      ]),
+      () =>
+        h.emitBatch([
+          { event: 'batch.fail', data: { i: 1 } },
+          { event: 'batch.fail', data: { i: 2 } },
+          { event: 'batch.fail', data: { i: 3 } },
+        ]),
       Error,
       'forced set failure',
     );
@@ -343,8 +389,18 @@ Deno.test('emitBatch rejects when a backend op throws — and rolls back the chu
     (db as any).set = origSet;
 
     // No orphan state keys for any of the 3 jobs that were in the failed chunk
-    const [, keys] = await db.scan(0, 'MATCH', 'queues:default:*:waiting', 'COUNT', 1000);
-    assertEquals(keys.length, 0, `expected zero orphan state keys, got ${keys.length}`);
+    const [, keys] = await db.scan(
+      0,
+      'MATCH',
+      'queues:default:*:waiting',
+      'COUNT',
+      1000,
+    );
+    assertEquals(
+      keys.length,
+      0,
+      `expected zero orphan state keys, got ${keys.length}`,
+    );
   }));
 
 Deno.test('emitBatch applies jobStateTtlSeconds to every state key', () =>
@@ -367,25 +423,35 @@ Deno.test('emitBatch chunks at claimCount and returns all ids in order', () =>
     h.on('batch.chunk', async () => {});
     const N = 25;
     const ids = await h.emitBatch(
-      Array.from({ length: N }, (_, i) => ({ event: 'batch.chunk', data: { i } })),
+      Array.from(
+        { length: N },
+        (_, i) => ({ event: 'batch.chunk', data: { i } }),
+      ),
     );
     assertEquals(ids.length, N);
     // All unique (different data → different deterministic ids)
     assertEquals(new Set(ids).size, N);
-  }, { processor: { pollIntervalMs: 50, jobStateTtlSeconds: 60, claimCount: 5 } }));
+  }, {
+    processor: { pollIntervalMs: 50, jobStateTtlSeconds: 60, claimCount: 5 },
+  }));
 
 Deno.test('ctx.emitBatch is available inside a handler and enqueues children', () =>
   withHound(async (h) => {
     let childCount = 0;
     let resolve!: () => void;
-    const done = new Promise<void>((r) => { resolve = r; });
+    const done = new Promise<void>((r) => {
+      resolve = r;
+    });
 
     h.on('child.task', async () => {
       if (++childCount === 4) resolve();
     });
 
     h.on('parent.fanout', async (ctx: any) => {
-      assert(typeof ctx.emitBatch === 'function', 'ctx.emitBatch must be defined');
+      assert(
+        typeof ctx.emitBatch === 'function',
+        'ctx.emitBatch must be defined',
+      );
       await ctx.emitBatch([
         { event: 'child.task', data: { i: 1 } },
         { event: 'child.task', data: { i: 2 } },
@@ -438,7 +504,9 @@ Deno.test('emitBatch jobs are all processed', () =>
     const N = 10;
     let count = 0;
     let resolve!: () => void;
-    const done = new Promise<void>((r) => { resolve = r; });
+    const done = new Promise<void>((r) => {
+      resolve = r;
+    });
 
     h.on('batch.count', async () => {
       if (++count === N) resolve();
@@ -446,7 +514,10 @@ Deno.test('emitBatch jobs are all processed', () =>
     await h.start();
 
     const ids = await h.emitBatch(
-      Array.from({ length: N }, (_, i) => ({ event: 'batch.count', data: { i } })),
+      Array.from(
+        { length: N },
+        (_, i) => ({ event: 'batch.count', data: { i } }),
+      ),
     );
     assertEquals(ids.length, N);
     await done;
@@ -456,7 +527,10 @@ Deno.test('emitBatch jobs are all processed', () =>
 Deno.test('emitBatch same payload produces same deterministic id as emitAsync', () =>
   withHound(async (h) => {
     h.on('batch.dedup', async () => {});
-    const [batchId] = await h.emitBatch([{ event: 'batch.dedup', data: { x: 42 } }]);
+    const [batchId] = await h.emitBatch([{
+      event: 'batch.dedup',
+      data: { x: 42 },
+    }]);
     const singleId = await h.emitAsync('batch.dedup', { x: 42 });
     assertEquals(batchId, singleId);
   }));
@@ -466,14 +540,114 @@ Deno.test('emitBatch same payload produces same deterministic id as emitAsync', 
 Deno.test('processes N jobs in parallel up to concurrency limit', () =>
   withHound(async (h) => {
     let completed = 0;
-    h.on('throughput.test', async () => { completed++; });
+    h.on('throughput.test', async () => {
+      completed++;
+    });
     await h.start();
 
     const N = 20;
     await Promise.all(
-      Array.from({ length: N }, (_, i) =>
-        h.emitAndWait('throughput.test', { i }, { id: `t${i}`, timeoutMs: 5000 })
+      Array.from(
+        { length: N },
+        (_, i) =>
+          h.emitAndWait('throughput.test', { i }, {
+            id: `t${i}`,
+            timeoutMs: 5000,
+          }),
       ),
     );
     assertEquals(completed, N);
   }, { concurrency: 5 }));
+
+// ─── Retry decision consistency ───────────────────────────────────────────────
+
+Deno.test('retry.shouldRetry veto → terminal failure rejects emitAndWait immediately', () =>
+  withHound(async (h) => {
+    let attempts = 0;
+    h.on('retry.veto', async () => {
+      attempts++;
+      throw new Error('veto-fail');
+    });
+    await h.start();
+    const start = Date.now();
+    // Despite attempts: 5, the shouldRetry predicate vetoes all retries —
+    // the failed notification must fire on the first failure, not after a
+    // 5s emitAndWait timeout (which is what a Hound/Processor mismatch causes).
+    await assertRejects(
+      () =>
+        h.emitAndWait('retry.veto', {}, {
+          attempts: 5,
+          retryDelayMs: 10,
+          timeoutMs: 5000,
+        }),
+      Error,
+      'veto-fail',
+    );
+    assert(
+      Date.now() - start < 3000,
+      'should reject via failure notification, not timeout',
+    );
+    assertEquals(attempts, 1);
+  }, {
+    processor: {
+      pollIntervalMs: 50,
+      jobStateTtlSeconds: 60,
+      retry: { shouldRetry: () => false },
+    },
+  }));
+
+Deno.test('missing handler is a config error — fails terminally, never retried', () =>
+  withHound(async (h, db) => {
+    h.on('cfg.known', async () => {}, { queue: 'cfgq' });
+    await h.start();
+
+    await assertRejects(
+      () =>
+        h.emitAndWait('cfg.unknown', {}, {
+          queue: 'cfgq',
+          id: 'cfg-job-1',
+          attempts: 3,
+          retryDelayMs: 10,
+          timeoutMs: 5000,
+        }),
+      Error,
+      'No handler',
+    );
+
+    await sleep(200); // would be enough for retries to fire if any were scheduled
+    const [, failedKeys] = await db.scan(
+      '0',
+      'MATCH',
+      'queues:cfgq:cfg-job-1:failed:*',
+      'COUNT',
+      100,
+    );
+    assertEquals(failedKeys.length, 1); // exactly one failed execution — no retries
+    assertEquals(await db.get('queues:cfgq:cfg-job-1:delayed'), null);
+  }));
+
+// ─── emitAndWait waiter collisions ────────────────────────────────────────────
+
+Deno.test('concurrent emitAndWait with identical payload — both callers resolve', () =>
+  withHound(async (h) => {
+    h.on('wait.dup', async () => {
+      await sleep(30);
+    });
+    await h.start();
+    // Same event+data → same deterministic jobId → both waiters share it.
+    // Pre-fix, the second waiter overwrote the first, which then hung to timeout.
+    const [a, b] = await Promise.all([
+      h.emitAndWait('wait.dup', { k: 1 }, { timeoutMs: 5000 }),
+      h.emitAndWait('wait.dup', { k: 1 }, { timeoutMs: 5000 }),
+    ]);
+    assertEquals(a, b);
+  }));
+
+Deno.test('emitAndWait timeout rejects with a typed HoundTimeoutError', () =>
+  withHound(async (h) => {
+    h.on('e2e.typed.timeout', async () => {});
+    // Not started — the job can never finish, so the waiter must time out.
+    const err = await h.emitAndWait('e2e.typed.timeout', {}, { timeoutMs: 50 })
+      .catch((e: Error) => e);
+    assertEquals((err as Error).name, 'HoundTimeoutError');
+  }));

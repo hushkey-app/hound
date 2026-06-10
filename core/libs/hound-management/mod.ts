@@ -61,6 +61,13 @@ export interface FindJobsOptions {
   queue?: string;
   /** Narrow to a specific job status. */
   status?: JobRecord['status'];
+  /**
+   * Max records to return, applied after sorting and filtering.
+   * Caps response size, not scan cost — find() still walks the keyspace.
+   */
+  limit?: number;
+  /** Records to skip before limit — for offset pagination. */
+  offset?: number;
 }
 
 /** Payload emitted when a job reaches a terminal state (completed or failed). */
@@ -114,8 +121,14 @@ export class HoundManagement {
     this.events = {
       job: {
         finished: (cb) => this.#subscribe(cb),
-        completed: (cb) => this.#subscribe((p) => { if (p.status === 'completed') cb(p); }),
-        failed: (cb) => this.#subscribe((p) => { if (p.status === 'failed') cb(p); }),
+        completed: (cb) =>
+          this.#subscribe((p) => {
+            if (p.status === 'completed') cb(p);
+          }),
+        failed: (cb) =>
+          this.#subscribe((p) => {
+            if (p.status === 'failed') cb(p);
+          }),
       },
     };
   }
@@ -133,10 +146,14 @@ export class HoundManagement {
 // ─── JobsApi ──────────────────────────────────────────────────────────────────
 
 class JobsApi {
+  private readonly queueStore: QueueStore;
+
   constructor(
     private readonly db: RedisConnection,
     private readonly hound?: Hound<any>,
-  ) {}
+  ) {
+    this.queueStore = new QueueStore(db);
+  }
 
   /**
    * Find jobs across all queues and statuses.
@@ -188,27 +205,91 @@ class JobsApi {
       }
     }
 
-    let results = Array.from(jobMap.values()).sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
-    if (options?.queue) results = results.filter((j) => j.queue === options.queue);
-    if (options?.status) results = results.filter((j) => j.status === options.status);
+    let results = Array.from(jobMap.values()).sort((a, b) =>
+      (b.timestamp ?? 0) - (a.timestamp ?? 0)
+    );
+    if (options?.queue) {
+      results = results.filter((j) => j.queue === options.queue);
+    }
+    if (options?.status) {
+      results = results.filter((j) => j.status === options.status);
+    }
+    if (options?.offset !== undefined && options.offset > 0) {
+      results = results.slice(options.offset);
+    }
+    if (options?.limit !== undefined && options.limit >= 0) {
+      results = results.slice(0, options.limit);
+    }
     return results;
   }
 
+  /**
+   * Get a single job by "{queue}:{jobId}" key. Direct key lookups — does not
+   * scan the full keyspace like find(). Merge semantics match find(): later
+   * active statuses win (delayed > waiting > processing), and a terminal
+   * record replaces the active one when its timestamp is newer.
+   */
   async get(key: string): Promise<JobRecord | null> {
     const [queue, ...rest] = key.split(':');
     const jobId = rest.join(':');
-    if (!queue || !jobId) throw new Error('key must be in format "{queue}:{jobId}"');
-    const jobs = await this.find();
-    return jobs.find((j) => j.queue === queue && j.id === jobId) ?? null;
+    if (!queue || !jobId) {
+      throw new Error('key must be in format "{queue}:{jobId}"');
+    }
+
+    const activeKeys = ACTIVE_STATUSES.map((s) =>
+      `queues:${queue}:${jobId}:${s}`
+    );
+    const pipe = this.db.pipeline();
+    activeKeys.forEach((k) => pipe.get(k));
+    const fetched = await pipe.exec() as [Error | null, string | null][];
+
+    let job: JobRecord | null = null;
+    for (let i = 0; i < ACTIVE_STATUSES.length; i++) {
+      const data = fetched[i][1];
+      if (!data) continue;
+      const parsed = this.#parseJob(data, ACTIVE_STATUSES[i], activeKeys[i]);
+      if (parsed) job = parsed;
+    }
+
+    for (const status of TERMINAL_STATUSES) {
+      const keys = await this.#scanKeys(`queues:${queue}:${jobId}:${status}:*`);
+      if (!keys.length) continue;
+
+      const tPipe = this.db.pipeline();
+      keys.forEach((k) => tPipe.get(k));
+      const results = await tPipe.exec() as [Error | null, string | null][];
+
+      for (let i = 0; i < results.length; i++) {
+        const [err, data] = results[i];
+        if (err || !data) continue;
+        const parts = keys[i].split(':');
+        const parsed = this.#parseJob(
+          data,
+          status,
+          keys[i],
+          parts[parts.length - 1],
+        );
+        if (!parsed) continue;
+        if (!job || (parsed.timestamp ?? 0) > (job.timestamp ?? 0)) {
+          job = parsed;
+        }
+      }
+    }
+
+    return job;
   }
 
   async delete(key: string): Promise<boolean> {
     const [queue, ...rest] = key.split(':');
     const jobId = rest.join(':');
-    if (!queue || !jobId) throw new Error('key must be in format "{queue}:{jobId}"');
+    if (!queue || !jobId) {
+      throw new Error('key must be in format "{queue}:{jobId}"');
+    }
 
     // Only include active keys that actually exist in Redis
-    const candidateActive = ACTIVE_STATUSES.map((s) => `queues:${queue}:${jobId}:${s}`);
+    const candidateActive = ACTIVE_STATUSES.map((s) =>
+      `queues:${queue}:${jobId}:${s}`
+    );
     const pipe = this.db.pipeline();
     candidateActive.forEach((k) => pipe.get(k));
     const fetched = await pipe.exec() as [Error | null, string | null][];
@@ -216,7 +297,9 @@ class JobsApi {
 
     const terminalKeys: string[] = [];
     for (const status of TERMINAL_STATUSES) {
-      const found = await this.#scanKeys(`queues:${queue}:${jobId}:${status}:*`);
+      const found = await this.#scanKeys(
+        `queues:${queue}:${jobId}:${status}:*`,
+      );
       terminalKeys.push(...found);
     }
 
@@ -229,7 +312,9 @@ class JobsApi {
 
   async promote(key: string): Promise<JobRecord | null> {
     if (!this.hound) {
-      throw new Error('promote() requires a Hound instance: new HoundManagement({ db, hound })');
+      throw new Error(
+        'promote() requires a Hound instance: new HoundManagement({ db, hound })',
+      );
     }
 
     const job = await this.get(key);
@@ -270,10 +355,27 @@ class JobsApi {
       );
     }
 
-    const paused = { ...job, delayUntil: Number.MAX_SAFE_INTEGER, lockUntil: Number.MAX_SAFE_INTEGER, paused: true };
-    await this.db.set(`queues:${job.queue}:${job.id}:${job.status}`, JSON.stringify(paused));
+    // Mutate the raw stored payload (not the JobRecord projection from get(),
+    // which lacks state.name/queue/options and would corrupt the state record).
+    const stateKey = `queues:${job.queue}:${job.id}:${job.status}`;
+    const raw = await this.db.get(stateKey);
+    if (!raw) return null;
+    const payload = JSON.parse(raw) as Record<string, unknown>;
+    payload.delayUntil = Number.MAX_SAFE_INTEGER;
+    payload.lockUntil = Number.MAX_SAFE_INTEGER;
+    payload.paused = true;
+    await this.db.set(stateKey, JSON.stringify(payload));
 
-    return paused as JobRecord;
+    // Push the queue-set score out too — otherwise the consumer still claims
+    // the job when its original score comes due. resume() re-scores to now.
+    await this.queueStore.enqueue(job.queue, job.id, Number.MAX_SAFE_INTEGER);
+
+    return {
+      ...job,
+      delayUntil: Number.MAX_SAFE_INTEGER,
+      lockUntil: Number.MAX_SAFE_INTEGER,
+      paused: true,
+    };
   }
 
   /** Resume a paused job — reverses a previous jobs.pause(). Resets delayUntil to now. */
@@ -287,10 +389,20 @@ class JobsApi {
       );
     }
 
-    const resumed = { ...job, delayUntil: Date.now(), lockUntil: Date.now(), paused: false };
-    await this.db.set(`queues:${job.queue}:${job.id}:${job.status}`, JSON.stringify(resumed));
+    // Mutate the raw stored payload — see pause() for why not the projection.
+    const stateKey = `queues:${job.queue}:${job.id}:${job.status}`;
+    const raw = await this.db.get(stateKey);
+    if (!raw) return null;
+    const payload = JSON.parse(raw) as Record<string, unknown>;
+    const now = Date.now();
+    payload.delayUntil = now;
+    payload.lockUntil = now;
+    payload.paused = false;
+    await this.db.set(stateKey, JSON.stringify(payload));
 
-    return resumed;
+    await this.queueStore.enqueue(job.queue, job.id, now);
+
+    return { ...job, delayUntil: now, lockUntil: now, paused: false };
   }
 
   /**
@@ -313,12 +425,21 @@ class JobsApi {
       );
     }
 
-    this.hound.emit(job.name, job.data, { queue: job.queue, id: job.id, delay: new Date() });
+    this.hound.emit(job.name, job.data, {
+      queue: job.queue,
+      id: job.id,
+      delay: new Date(),
+    });
 
     return job;
   }
 
-  #parseJob(data: string, status: string, key: string, execId?: string): JobRecord | null {
+  #parseJob(
+    data: string,
+    status: string,
+    key: string,
+    execId?: string,
+  ): JobRecord | null {
     try {
       const raw = JSON.parse(data);
       return {
@@ -352,7 +473,13 @@ class JobsApi {
     const keys: string[] = [];
     let cursor = '0';
     do {
-      const [next, batch] = await this.db.scan(cursor, 'MATCH', pattern, 'COUNT', 100) as [string, string[]];
+      const [next, batch] = await this.db.scan(
+        cursor,
+        'MATCH',
+        pattern,
+        'COUNT',
+        100,
+      ) as [string, string[]];
       cursor = next;
       keys.push(...batch);
     } while (cursor !== '0');
@@ -378,7 +505,13 @@ class QueuesApi {
 
     let cursor = '0';
     do {
-      const [next, keys] = await this.db.scan(cursor, 'MATCH', 'queues:*:*:*', 'COUNT', 100) as [string, string[]];
+      const [next, keys] = await this.db.scan(
+        cursor,
+        'MATCH',
+        'queues:*:*:*',
+        'COUNT',
+        100,
+      ) as [string, string[]];
       cursor = next;
       for (const key of keys) {
         const parts = key.split(':');
@@ -391,7 +524,13 @@ class QueuesApi {
     // Also discover from sorted-set queue keys
     let qCursor = '0';
     do {
-      const [next, keys] = await this.db.scan(qCursor, 'MATCH', 'queues:*:q', 'COUNT', 100) as [string, string[]];
+      const [next, keys] = await this.db.scan(
+        qCursor,
+        'MATCH',
+        'queues:*:q',
+        'COUNT',
+        100,
+      ) as [string, string[]];
       qCursor = next;
       for (const key of keys) {
         // queues:{queue}:q
@@ -442,7 +581,13 @@ class QueuesApi {
 
   /** Per-status job counts for a queue. Deduplicates completed/failed by jobId. */
   async stats(key: string): Promise<QueueStats> {
-    const counts = { waiting: 0, delayed: 0, processing: 0, completed: 0, failed: 0 };
+    const counts = {
+      waiting: 0,
+      delayed: 0,
+      processing: 0,
+      completed: 0,
+      failed: 0,
+    };
 
     for (const status of ACTIVE_STATUSES) {
       const keys = await this.#scanStateKeys(`queues:${key}:*:${status}`);
@@ -454,14 +599,24 @@ class QueuesApi {
       counts[status] = new Set(keys.map((k) => k.split(':')[2])).size;
     }
 
-    return { ...counts, total: counts.waiting + counts.delayed + counts.processing + counts.completed + counts.failed };
+    return {
+      ...counts,
+      total: counts.waiting + counts.delayed + counts.processing +
+        counts.completed + counts.failed,
+    };
   }
 
   async #scanStateKeys(pattern: string): Promise<string[]> {
     const keys: string[] = [];
     let cursor = '0';
     do {
-      const [next, batch] = await this.db.scan(cursor, 'MATCH', pattern, 'COUNT', 100) as [string, string[]];
+      const [next, batch] = await this.db.scan(
+        cursor,
+        'MATCH',
+        pattern,
+        'COUNT',
+        100,
+      ) as [string, string[]];
       cursor = next;
       keys.push(...batch);
     } while (cursor !== '0');

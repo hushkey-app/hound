@@ -1,4 +1,4 @@
-import { assertEquals } from 'jsr:@std/assert';
+import { assertEquals } from 'jsr:@std/assert@1';
 import { InMemoryStorage } from '../libs/storage/in-memory.ts';
 import { QueueStore } from '../libs/consumer/queue-store.ts';
 
@@ -104,7 +104,10 @@ Deno.test('QueueStore: stalledJobs returns empty when none are stalled', async (
 
 Deno.test('QueueStore: getJobData reads waiting and delayed state keys', async () => {
   const { store, db } = makeStore();
-  const raw = JSON.stringify({ id: 'j1', state: { name: 'evt', queue: 'default' } });
+  const raw = JSON.stringify({
+    id: 'j1',
+    state: { name: 'evt', queue: 'default' },
+  });
   await db.set('queues:default:j1:waiting', raw);
 
   const result = await store.getJobData('default', ['j1', 'missing']);
@@ -120,6 +123,21 @@ Deno.test('QueueStore: getJobData prefers delayed state key', async () => {
   const result = await store.getJobData('default', ['j1']);
   // waiting is checked first, so it wins
   assertEquals(result.get('j1'), 'waiting-data');
+});
+
+Deno.test('QueueStore: getJobData falls back to processing state key (crash recovery)', async () => {
+  const { store, db } = makeStore();
+  // Worker crashed mid-job: state key already transitioned to :processing,
+  // then the Reaper re-enqueued the jobId. The data must still be found.
+  const raw = JSON.stringify({
+    id: 'j1',
+    state: { name: 'evt', queue: 'default' },
+    status: 'processing',
+  });
+  await db.set('queues:default:j1:processing', raw);
+
+  const result = await store.getJobData('default', ['j1']);
+  assertEquals(result.get('j1'), raw);
 });
 
 Deno.test('QueueStore: deleteQueue removes both sorted sets', async () => {

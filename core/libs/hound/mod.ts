@@ -4,7 +4,7 @@
  *
  * @module
  */
-import { Processor } from '../processor/processor.ts';
+import { Processor, shouldRetryJob } from '../processor/processor.ts';
 import { DebounceManager } from '../processor/debounce-manager.ts';
 import { QueueStore } from '../consumer/queue-store.ts';
 import { Reaper } from '../consumer/reaper.ts';
@@ -21,11 +21,11 @@ import type {
   EmitFunction,
   EmitOptions,
   HandlerOptions,
+  HoundOptions,
   JobContext,
   JobData,
   JobDefinition,
   JobHandler,
-  HoundOptions,
   JobSocketContext,
   Message,
   MessageContext,
@@ -35,6 +35,8 @@ import type {
 import {
   genExecId,
   genJobIdSync,
+  HoundConfigError,
+  HoundTimeoutError,
   parseCronExpression,
 } from '../../utils/index.ts';
 
@@ -49,15 +51,21 @@ export type {
   EmitFunction,
   EmitOptions,
   HandlerOptions,
+  HoundOptions,
   JobContext,
   JobDefinition,
   JobHandler,
-  HoundOptions,
   MiddlewareFn,
 } from '../../types/index.ts';
 
 /** Symbol for internal subscription. Not part of public API. */
 export const SUBSCRIBE_JOB_FINISHED = Symbol.for('hound.subscribeJobFinished');
+
+interface JobWaiter {
+  resolve: (jobId: string) => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
 
 export class Hound<
   TApp extends Record<string, unknown> = Record<string, unknown>,
@@ -83,7 +91,8 @@ export class Hound<
 
   private handlers: Map<string, JobHandler<TApp, any>> = new Map();
   private handlerDebounce: Map<string, DebounceManager> = new Map();
-  private handlerSemaphores: Map<string, { limit: number; active: number }> = new Map();
+  private handlerSemaphores: Map<string, { limit: number; active: number }> =
+    new Map();
   private handlerTimeouts: Map<string, number> = new Map();
   private pendingCronJobs: Map<
     string,
@@ -111,11 +120,9 @@ export class Hound<
       error?: string;
     }) => void
   >();
-  readonly #jobWaiters = new Map<string, {
-    resolve: (jobId: string) => void;
-    reject: (err: Error) => void;
-    timer: ReturnType<typeof setTimeout>;
-  }>();
+  // Set per jobId: deterministic ids mean two concurrent emitAndWait calls with
+  // the same event+data share a jobId — every waiter must resolve, not just the last.
+  readonly #jobWaiters = new Map<string, Set<JobWaiter>>();
   #jobWaiterListenerActive = false;
 
   private readonly JOB_STATUS_MESSAGES = {
@@ -138,7 +145,12 @@ export class Hound<
       emitAsync: this.emitAsync.bind(this),
       emitAndWait: this.emitAndWait.bind(this),
       emitBatch: this.emitBatch.bind(this),
-    } as TApp & { emit: EmitFunction; emitAsync: EmitAsyncFunction; emitAndWait: EmitAndWaitFunction; emitBatch: EmitBatchFunction };
+    } as TApp & {
+      emit: EmitFunction;
+      emitAsync: EmitAsyncFunction;
+      emitAndWait: EmitAndWaitFunction;
+      emitBatch: EmitBatchFunction;
+    };
 
     this.auth = options.auth;
     this.importMeta = options.importMeta;
@@ -150,6 +162,9 @@ export class Hound<
   ): Hound<TApp> {
     const g = globalThis as Record<string, unknown>;
     if (g['__hound_instance__']) {
+      console.warn(
+        '[hound] Hound.create() called more than once — returning the existing instance, new options are ignored. Use Hound.getInstance() to make this explicit.',
+      );
       Hound.instance = g['__hound_instance__'] as Hound<TApp>;
       return Hound.instance;
     }
@@ -202,7 +217,9 @@ export class Hound<
       const colonIdx = key.indexOf(':');
       if (key.slice(colonIdx + 1) === event && key !== handlerKey) {
         throw new Error(
-          `[hound] Duplicate event name '${event}': already registered on queue '${key.slice(0, colonIdx)}'. ` +
+          `[hound] Duplicate event name '${event}': already registered on queue '${
+            key.slice(0, colonIdx)
+          }'. ` +
             `Event names must be unique across all queues.`,
         );
       }
@@ -212,7 +229,10 @@ export class Hound<
     this.queues.add(queue);
 
     if (opts?.concurrency !== undefined && opts.concurrency > 0) {
-      this.handlerSemaphores.set(handlerKey, { limit: opts.concurrency, active: 0 });
+      this.handlerSemaphores.set(handlerKey, {
+        limit: opts.concurrency,
+        active: 0,
+      });
     }
 
     if (opts?.timeoutMs !== undefined && opts.timeoutMs > 0) {
@@ -221,10 +241,15 @@ export class Hound<
 
     if (opts?.debounce !== undefined) {
       const debounceSeconds = Math.ceil(opts.debounce / 1000);
-      this.handlerDebounce.set(handlerKey, new DebounceManager(debounceSeconds, undefined));
+      this.handlerDebounce.set(
+        handlerKey,
+        new DebounceManager(debounceSeconds, undefined),
+      );
     }
 
-    if (opts?.repeat && opts.repeat.catchUp !== undefined && !opts.repeat.pattern) {
+    if (
+      opts?.repeat && opts.repeat.catchUp !== undefined && !opts.repeat.pattern
+    ) {
       throw new Error(
         `[hound] '${event}': repeat.catchUp is only valid for cron jobs. ` +
           `Set repeat.pattern, or remove catchUp — non-cron jobs are always recovered by the Reaper.`,
@@ -292,7 +317,9 @@ export class Hound<
 
     if (!event) throw new Error('event is required');
 
-    if (opts.repeat && opts.repeat.catchUp !== undefined && !opts.repeat.pattern) {
+    if (
+      opts.repeat && opts.repeat.catchUp !== undefined && !opts.repeat.pattern
+    ) {
       throw new Error(
         `[hound] emit('${event}'): repeat.catchUp is only valid for cron jobs. ` +
           `Set repeat.pattern, or remove catchUp — non-cron jobs are always recovered by the Reaper.`,
@@ -305,10 +332,14 @@ export class Hound<
     if (opts.delay) {
       delayUntil = opts.delay;
     } else if (opts.repeat?.pattern) {
-      delayUntil = parseCronExpression(opts.repeat.pattern).getNextDate(new Date());
+      delayUntil = parseCronExpression(opts.repeat.pattern).getNextDate(
+        new Date(),
+      );
     }
 
-    const delayUntilMs = delayUntil instanceof Date ? delayUntil.getTime() : delayUntil;
+    const delayUntilMs = delayUntil instanceof Date
+      ? delayUntil.getTime()
+      : delayUntil;
 
     const jobData: JobData = {
       id: jobId,
@@ -346,7 +377,11 @@ export class Hound<
   }
 
   emit(event: string, data?: unknown, options?: EmitOptions): string {
-    const [jobId, queue, stateKey, dataJson, score] = this.#buildPayload(event, data, options);
+    const [jobId, queue, stateKey, dataJson, score] = this.#buildPayload(
+      event,
+      data,
+      options,
+    );
 
     this.#setJobState(stateKey, dataJson)
       .then(() => this.queueStore.enqueue(queue, jobId, score))
@@ -357,8 +392,16 @@ export class Hound<
     return jobId;
   }
 
-  async emitAsync(event: string, data?: unknown, options?: EmitOptions): Promise<string> {
-    const [jobId, queue, stateKey, dataJson, score] = this.#buildPayload(event, data, options);
+  async emitAsync(
+    event: string,
+    data?: unknown,
+    options?: EmitOptions,
+  ): Promise<string> {
+    const [jobId, queue, stateKey, dataJson, score] = this.#buildPayload(
+      event,
+      data,
+      options,
+    );
 
     await this.#setJobState(stateKey, dataJson);
     await this.queueStore.enqueue(queue, jobId, score);
@@ -370,13 +413,60 @@ export class Hound<
     if (this.#jobWaiterListenerActive) return;
     this.#jobWaiterListenerActive = true;
     this[SUBSCRIBE_JOB_FINISHED](({ jobId, status, error }) => {
-      const entry = this.#jobWaiters.get(jobId);
-      if (!entry) return;
+      const waiters = this.#jobWaiters.get(jobId);
+      if (!waiters) return;
       this.#jobWaiters.delete(jobId);
-      clearTimeout(entry.timer);
-      if (status === 'failed') entry.reject(new Error(error ?? 'Job failed'));
-      else entry.resolve(jobId);
+      for (const waiter of waiters) {
+        clearTimeout(waiter.timer);
+        if (status === 'failed') {
+          waiter.reject(new Error(error ?? 'Job failed'));
+        } else waiter.resolve(jobId);
+      }
     });
+  }
+
+  /** Register a waiter for jobId. Returns the promise plus an abort to reject it early. */
+  #registerJobWaiter(
+    jobId: string,
+    timeoutMs: number,
+  ): { promise: Promise<string>; abort: (err: Error) => void } {
+    let waiterRef!: JobWaiter;
+    const promise = new Promise<string>((resolve, reject) => {
+      const waiter: JobWaiter = {
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          this.#removeJobWaiter(jobId, waiter);
+          reject(
+            new HoundTimeoutError(
+              `Job ${jobId} timed out after ${timeoutMs}ms`,
+            ),
+          );
+        }, timeoutMs),
+      };
+      waiterRef = waiter;
+      let set = this.#jobWaiters.get(jobId);
+      if (!set) {
+        set = new Set();
+        this.#jobWaiters.set(jobId, set);
+      }
+      set.add(waiter);
+    });
+    return {
+      promise,
+      abort: (err: Error) => {
+        clearTimeout(waiterRef.timer);
+        this.#removeJobWaiter(jobId, waiterRef);
+        waiterRef.reject(err);
+      },
+    };
+  }
+
+  #removeJobWaiter(jobId: string, waiter: JobWaiter): void {
+    const set = this.#jobWaiters.get(jobId);
+    if (!set) return;
+    set.delete(waiter);
+    if (set.size === 0) this.#jobWaiters.delete(jobId);
   }
 
   async emitAndWait(
@@ -388,16 +478,16 @@ export class Hound<
     const { timeoutMs = 30_000, ...emitOpts } = options ?? {};
     const jobId = emitOpts.id ?? genJobIdSync(event, data ?? {});
 
-    const waitPromise = new Promise<string>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.#jobWaiters.delete(jobId);
-        reject(new Error(`Job ${jobId} timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-      this.#jobWaiters.set(jobId, { resolve, reject, timer });
-    });
+    const { promise, abort } = this.#registerJobWaiter(jobId, timeoutMs);
 
-    this.emit(event, data, { ...emitOpts, id: jobId });
-    return waitPromise;
+    // Awaitable emit so an enqueue failure rejects the waiter immediately
+    // instead of leaving it to dangle until the timeout fires.
+    this.emitAsync(event, data, { ...emitOpts, id: jobId }).catch(
+      (err: unknown) => {
+        abort(err instanceof Error ? err : new Error(String(err)));
+      },
+    );
+    return promise;
   }
 
   /**
@@ -459,7 +549,9 @@ export class Hound<
 
     const e2eLatencies: number[] = [];
     this.on(BENCH_EVENT, async (ctx) => {
-      if (simulatedWorkMs > 0) await new Promise<void>((r) => setTimeout(r, simulatedWorkMs));
+      if (simulatedWorkMs > 0) {
+        await new Promise<void>((r) => setTimeout(r, simulatedWorkMs));
+      }
       e2eLatencies.push(Date.now() - ctx.enqueuedAt);
     });
 
@@ -474,14 +566,11 @@ export class Hound<
     // in the queue before we wait. This primes the consumer out of its initial
     // idle poll-sleep before any timed work begins.
     const warmupId = `__bench__warmup__${crypto.randomUUID()}`;
-    const warmupDone = new Promise<string>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.#jobWaiters.delete(warmupId);
-        reject(new Error('Benchmark warm-up timed out'));
-      }, timeoutMs);
-      this.#jobWaiters.set(warmupId, { resolve, reject, timer });
+    const warmupDone = this.#registerJobWaiter(warmupId, timeoutMs).promise;
+    await this.emitAsync(BENCH_EVENT, { simulatedWorkMs }, {
+      queue: BENCH_QUEUE,
+      id: warmupId,
     });
-    await this.emitAsync(BENCH_EVENT, { simulatedWorkMs }, { queue: BENCH_QUEUE, id: warmupId });
     await warmupDone;
 
     // Register waiters before emitting so no job-finished events are missed.
@@ -490,19 +579,16 @@ export class Hound<
       (_, i) => `__bench__${i}__${crypto.randomUUID()}`,
     );
     const waitPromises = jobIds.map((id) =>
-      new Promise<string>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          this.#jobWaiters.delete(id);
-          reject(new Error(`Job ${id} timed out after ${timeoutMs}ms`));
-        }, timeoutMs);
-        this.#jobWaiters.set(id, { resolve, reject, timer });
-      })
+      this.#registerJobWaiter(id, timeoutMs).promise
     );
 
     // Emit all jobs concurrently — queue everything before timing starts.
     await Promise.all(
       jobIds.map((id) =>
-        this.emitAsync(BENCH_EVENT, { simulatedWorkMs }, { queue: BENCH_QUEUE, id })
+        this.emitAsync(BENCH_EVENT, { simulatedWorkMs }, {
+          queue: BENCH_QUEUE,
+          id,
+        })
       ),
     );
 
@@ -548,9 +634,13 @@ ${'─'.repeat(40)}
   }
 
   /** Enqueue an existing job payload directly (used by HoundManagement.promoteJob). */
-  async enqueueJob(queue: string, jobPayload: Record<string, unknown>): Promise<void> {
+  async enqueueJob(
+    queue: string,
+    jobPayload: Record<string, unknown>,
+  ): Promise<void> {
     const jobId = jobPayload.id as string;
-    const score = (jobPayload.delayUntil as number ?? Date.now()) - ((jobPayload.priority as number) ?? 0);
+    const score = (jobPayload.delayUntil as number ?? Date.now()) -
+      ((jobPayload.priority as number) ?? 0);
     await this.queueStore.enqueue(queue, jobId, score);
   }
 
@@ -595,7 +685,11 @@ ${'─'.repeat(40)}
   }
 
   /** Pipeline DEL old key + SET new key in one round trip. */
-  private async transitionState(delKey: string, setKey: string, value: string): Promise<void> {
+  private async transitionState(
+    delKey: string,
+    setKey: string,
+    value: string,
+  ): Promise<void> {
     const ttl = this.processorOptions?.jobStateTtlSeconds;
     const pipe = this.db.pipeline();
     pipe.del(delKey);
@@ -625,7 +719,8 @@ ${'─'.repeat(40)}
     const base = new URL('.', this.importMeta.url);
 
     for (const dir of this.jobDirs) {
-      const dirPath = new URL(dir.endsWith('/') ? dir : dir + '/', base).pathname;
+      const dirPath =
+        new URL(dir.endsWith('/') ? dir : dir + '/', base).pathname;
       try {
         for await (const entry of this.#walkJobFiles(dirPath)) {
           try {
@@ -689,13 +784,16 @@ ${'─'.repeat(40)}
       if (existingData) {
         try {
           const existing = JSON.parse(existingData);
-          const persistedCatchUp = existing.state?.options?.repeat?.catchUp ?? repeat.catchUp ?? false;
+          const persistedCatchUp = existing.state?.options?.repeat?.catchUp ??
+            repeat.catchUp ?? false;
           const persistedDelayUntil = existing.delayUntil ?? Date.now();
           const isStale = persistedDelayUntil < Date.now();
 
           if (isStale && !persistedCatchUp) {
             // Skip the missed tick — schedule the next natural fire instead.
-            const nextRun = parseCronExpression(repeat.pattern).getNextDate(new Date()).getTime();
+            const nextRun = parseCronExpression(repeat.pattern).getNextDate(
+              new Date(),
+            ).getTime();
             const refreshed = {
               ...existing,
               delayUntil: nextRun,
@@ -704,12 +802,16 @@ ${'─'.repeat(40)}
             await this.#setJobState(delayedKey, JSON.stringify(refreshed));
             const score = nextRun - (existing.priority ?? 0);
             await this.queueStore.enqueue(queue, jobId, score);
-            debug(` cron ${event}: stale tick skipped (catchUp=false), rescheduled to ${nextRun}`);
+            debug(
+              ` cron ${event}: stale tick skipped (catchUp=false), rescheduled to ${nextRun}`,
+            );
           } else {
             // Re-add to queue in case the sorted set was flushed (restart safety)
             const score = persistedDelayUntil - (existing.priority ?? 0);
             await this.queueStore.enqueue(queue, jobId, score);
-            debug(` cron ${event}: re-registered with delayUntil=${persistedDelayUntil}`);
+            debug(
+              ` cron ${event}: re-registered with delayUntil=${persistedDelayUntil}`,
+            );
           }
         } catch {
           // Corrupt state — emit fresh
@@ -717,13 +819,18 @@ ${'─'.repeat(40)}
         }
       } else {
         // Check processing set — Reaper will handle it if it's there
-        const inProcessing = await this.db.zscore(`queues:${queue}:processing`, jobId);
+        const inProcessing = await this.db.zscore(
+          `queues:${queue}:processing`,
+          jobId,
+        );
         if (!inProcessing) {
           // Not scheduled anywhere — emit fresh
           await this.emitAsync(event, {}, { queue, repeat, attempts });
           debug(` cron ${event}: emitted fresh`);
         } else {
-          debug(` cron ${event}: found in processing set, Reaper will reclaim if stalled`);
+          debug(
+            ` cron ${event}: found in processing set, Reaper will reclaim if stalled`,
+          );
         }
       }
     }
@@ -736,7 +843,9 @@ ${'─'.repeat(40)}
       });
     }
 
-    // Start Reaper
+    // Start Reaper — stop any previous one first (start() can run twice, e.g.
+    // via benchmark()) so its interval doesn't leak and double-sweep.
+    this.reaper?.stop();
     const allQueues = Array.from(this.queues);
     this.reaper = new Reaper({
       db: this.db,
@@ -748,10 +857,10 @@ ${'─'.repeat(40)}
     this.isStarted = true;
     this.#setupGracefulShutdown();
 
-
-
     const queueList = Array.from(this.queues).join(', ');
-    debug(`Hound started with ${this.queues.size} queue(s) [${queueList}] and concurrency ${this.concurrency}`);
+    debug(
+      `Hound started with ${this.queues.size} queue(s) [${queueList}] and concurrency ${this.concurrency}`,
+    );
     return this;
   }
 
@@ -761,13 +870,30 @@ ${'─'.repeat(40)}
 
   /** Start the HTTP gateway on the given port (hostname defaults to 0.0.0.0). */
   listen(port: number, onListen?: (addr: Deno.NetAddr) => void): this;
-  listen(port: number, management: HoundManagement | null, onListen?: (addr: Deno.NetAddr) => void): this;
-  listen(hostname: string, port: number, onListen?: (addr: Deno.NetAddr) => void): this;
-  listen(hostname: string, port: number, management: HoundManagement | null, onListen?: (addr: Deno.NetAddr) => void): this;
+  listen(
+    port: number,
+    management: HoundManagement | null,
+    onListen?: (addr: Deno.NetAddr) => void,
+  ): this;
+  listen(
+    hostname: string,
+    port: number,
+    onListen?: (addr: Deno.NetAddr) => void,
+  ): this;
+  listen(
+    hostname: string,
+    port: number,
+    management: HoundManagement | null,
+    onListen?: (addr: Deno.NetAddr) => void,
+  ): this;
 
   listen(
     hostnameOrPort: string | number,
-    portOrManagementOrCb?: number | HoundManagement | null | ((addr: Deno.NetAddr) => void),
+    portOrManagementOrCb?:
+      | number
+      | HoundManagement
+      | null
+      | ((addr: Deno.NetAddr) => void),
     managementOrCb?: HoundManagement | null | ((addr: Deno.NetAddr) => void),
     onListen?: (addr: Deno.NetAddr) => void,
   ): this {
@@ -790,28 +916,41 @@ ${'─'.repeat(40)}
       if (typeof portOrManagementOrCb === 'function') {
         cb = portOrManagementOrCb;
       } else {
-        management = (portOrManagementOrCb as HoundManagement | null | undefined) ?? undefined;
+        management =
+          (portOrManagementOrCb as HoundManagement | null | undefined) ??
+            undefined;
         cb = typeof managementOrCb === 'function' ? managementOrCb : undefined;
       }
     }
 
     this.server?.shutdown();
-    this.server = createGateway({ hostname, port, hound: this, auth: this.auth, management, onListen: cb });
+    this.server = createGateway({
+      hostname,
+      port,
+      hound: this,
+      auth: this.auth,
+      management,
+      onListen: cb,
+    });
     return this;
   }
 
   async stop(): Promise<void> {
     // Cancel all pending emitAndWait timers — avoids leaked timers in tests
-    for (const [, waiter] of this.#jobWaiters) {
-      clearTimeout(waiter.timer);
-      waiter.reject(new Error('Hound stopped'));
+    for (const waiters of this.#jobWaiters.values()) {
+      for (const waiter of waiters) {
+        clearTimeout(waiter.timer);
+        waiter.reject(new Error('Hound stopped'));
+      }
     }
     this.#jobWaiters.clear();
 
     // Unregister OS signal listeners so they don't leak across test boundaries
     if (typeof Deno !== 'undefined') {
       for (const [signal, handler] of this.signalHandlers) {
-        try { Deno.removeSignalListener(signal as 'SIGINT' | 'SIGTERM', handler); } catch { /* ignore */ }
+        try {
+          Deno.removeSignalListener(signal as 'SIGINT' | 'SIGTERM', handler);
+        } catch { /* ignore */ }
       }
     }
     this.signalHandlers.clear();
@@ -821,6 +960,20 @@ ${'─'.repeat(40)}
     this.reaper = undefined;
 
     this.processor?.stop();
+    if (this.processor) {
+      // Bounded drain — give in-flight handlers a chance to write their terminal
+      // state before the Redis connection goes away on graceful shutdown.
+      // Without this they die mid-write and sit at :processing until the Reaper
+      // of the next process recovers them.
+      let drainTimer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        this.processor.waitForActiveJobs(),
+        new Promise<void>((resolve) => {
+          drainTimer = setTimeout(resolve, 2000);
+        }),
+      ]);
+      clearTimeout(drainTimer);
+    }
 
     if (this.server) {
       await Promise.race([
@@ -857,7 +1010,9 @@ ${'─'.repeat(40)}
       const jobData = message.data;
 
       if (!jobData?.state?.name || !jobData?.state?.queue) {
-        throw new Error(' Invalid job data: missing state.name or state.queue');
+        throw new HoundConfigError(
+          'Invalid job data: missing state.name or state.queue',
+        );
       }
 
       const queueName = jobData.state.queue;
@@ -887,7 +1042,18 @@ ${'─'.repeat(40)}
             await ctx.ack();
             return;
           }
-          if (parsed.paused === true) return;
+          if (parsed.paused === true) {
+            // Park the paused job at a far-future score instead of leaving it
+            // un-ACKed in the processing set, where the Reaper would reclaim and
+            // re-claim it every sweep. jobs.resume() re-scores it back to now.
+            await ctx.ack();
+            await this.queueStore.enqueue(
+              queueName,
+              jobId,
+              Number.MAX_SAFE_INTEGER,
+            );
+            return;
+          }
         } catch {
           // Unparseable state — continue processing
         }
@@ -895,10 +1061,35 @@ ${'─'.repeat(40)}
 
       const handler = this.handlers.get(handlerKey);
       if (!handler) {
-        throw new Error(
-          ` No handler for queue: ${queueName}, event: ${jobName}. ` +
+        const err = new HoundConfigError(
+          `No handler for queue: ${queueName}, event: ${jobName}. ` +
             `Registered: ${Array.from(this.handlers.keys()).join(', ')}`,
         );
+        // This error never reaches #processJob, whose catch normally writes the
+        // failed record and wakes emitAndWait waiters — do both here, then
+        // rethrow so the Processor nacks (config errors are never retried).
+        const failedData = {
+          ...jobData,
+          status: 'failed',
+          timestamp: Date.now(),
+          errors: [{ message: err.message, timestamp: Date.now() }],
+        };
+        const oldKey = `queues:${queueName}:${jobId}:${
+          jobData.status || 'waiting'
+        }`;
+        const failedKey = `queues:${queueName}:${jobId}:failed:${genExecId()}`;
+        await this.transitionState(
+          oldKey,
+          failedKey,
+          JSON.stringify(failedData),
+        );
+        this.#notifyJobFinished({
+          jobId,
+          queue: queueName,
+          status: 'failed',
+          error: err.message,
+        });
+        throw err;
       }
 
       const debounceManager = this.handlerDebounce.get(handlerKey);
@@ -908,9 +1099,14 @@ ${'─'.repeat(40)}
       const sem = this.handlerSemaphores.get(handlerKey);
       if (sem && sem.active >= sem.limit) {
         const requeueDelay = this.processorOptions?.pollIntervalMs ?? 3000;
-        const originalScore = (jobData.delayUntil ?? Date.now()) - (jobData.priority ?? 0);
+        const originalScore = (jobData.delayUntil ?? Date.now()) -
+          (jobData.priority ?? 0);
         await ctx.ack();
-        await this.queueStore.enqueue(queueName, jobId, originalScore + requeueDelay);
+        await this.queueStore.enqueue(
+          queueName,
+          jobId,
+          originalScore + requeueDelay,
+        );
         return;
       }
 
@@ -926,7 +1122,13 @@ ${'─'.repeat(40)}
             await originalHandler(c);
             debounceManager.markProcessed(message);
           };
-          await this.#processJob(jobData, jobId, queueName, wrappedHandler, ctx);
+          await this.#processJob(
+            jobData,
+            jobId,
+            queueName,
+            wrappedHandler,
+            ctx,
+          );
         } else {
           await this.#processJob(jobData, jobId, queueName, handler, ctx);
         }
@@ -966,7 +1168,9 @@ ${'─'.repeat(40)}
       if (!jobEntry.logger) {
         jobEntry.logger = (message: string | object) => {
           jobEntry.logs?.push({
-            message: typeof message === 'string' ? message : JSON.stringify(message),
+            message: typeof message === 'string'
+              ? message
+              : JSON.stringify(message),
             timestamp: Date.now(),
           });
           this.#trimLogs(jobEntry);
@@ -975,17 +1179,30 @@ ${'─'.repeat(40)}
 
       if (
         jobEntry.status !== 'processing' &&
-        !jobEntry.logs.find((l: any) => l.message === this.JOB_STATUS_MESSAGES.processing)
+        !jobEntry.logs.find((l: any) =>
+          l.message === this.JOB_STATUS_MESSAGES.processing
+        )
       ) {
-        jobEntry.logs.push({ message: this.JOB_STATUS_MESSAGES.processing, timestamp: Date.now() });
+        jobEntry.logs.push({
+          message: this.JOB_STATUS_MESSAGES.processing,
+          timestamp: Date.now(),
+        });
         this.#trimLogs(jobEntry);
       }
 
-      const processingData = { ...jobEntry, lastRun: Date.now(), status: 'processing' };
+      const processingData = {
+        ...jobEntry,
+        lastRun: Date.now(),
+        status: 'processing',
+      };
       const oldKey = `queues:${queueName}:${jobId}:${jobEntry.status}`;
       const processingKey = `queues:${queueName}:${jobId}:processing`;
 
-      await this.transitionState(oldKey, processingKey, JSON.stringify(processingData));
+      await this.transitionState(
+        oldKey,
+        processingKey,
+        JSON.stringify(processingData),
+      );
 
       // catchUp guard — skip stale cron ticks (e.g. resurrected by Reaper after restart).
       // When catchUp:false (default), a tick whose scheduled time is more than one interval
@@ -993,14 +1210,18 @@ ${'─'.repeat(40)}
       const cronPatternForCatchUp = jobEntry?.state?.options?.repeat?.pattern;
       const cronCatchUp = jobEntry?.state?.options?.repeat?.catchUp ?? false;
       if (cronPatternForCatchUp && jobEntry.repeatCount && !cronCatchUp) {
-        const nextRun = parseCronExpression(cronPatternForCatchUp).getNextDate(new Date()).getTime();
+        const nextRun = parseCronExpression(cronPatternForCatchUp).getNextDate(
+          new Date(),
+        ).getTime();
         const intervalMs = nextRun - Date.now();
         const stalenessMs = Date.now() - (jobEntry.delayUntil ?? Date.now());
         if (stalenessMs > intervalMs) {
           await this.db.del(processingKey);
           await this.#scheduleCronNextTick(jobEntry, queueName);
           await _ctx.ack();
-          debug(` cron ${jobEntry.state.name}: stale tick skipped (catchUp=false, staleness=${stalenessMs}ms)`);
+          debug(
+            ` cron ${jobEntry.state.name}: stale tick skipped (catchUp=false, staleness=${stalenessMs}ms)`,
+          );
           return;
         }
       }
@@ -1020,29 +1241,49 @@ ${'─'.repeat(40)}
         emitAsync: this.emitAsync.bind(this),
         emitAndWait: this.emitAndWait.bind(this),
         emitBatch: this.emitBatch.bind(this),
-        socket: this.#createSocketContext(jobId, jobEntry.state.name!, jobEntry.state.queue!),
+        socket: this.#createSocketContext(
+          jobId,
+          jobEntry.state.name!,
+          jobEntry.state.queue!,
+        ),
       };
 
       // Cron dedup lock — prevents double execution on restart recovery
       const cronPattern = jobEntry?.state?.options?.repeat?.pattern;
       if (cronPattern && jobEntry.repeatCount) {
-        const cronExecLockKey = `queues:${queueName}:cron-exec:${jobId}:${jobEntry.delayUntil}`;
+        const cronExecLockKey =
+          `queues:${queueName}:cron-exec:${jobId}:${jobEntry.delayUntil}`;
         const lockTtl = this.processorOptions?.jobStateTtlSeconds ?? 3600;
-        const acquired = await this.db.set(cronExecLockKey, '1', 'EX', lockTtl, 'NX');
+        const acquired = await this.db.set(
+          cronExecLockKey,
+          '1',
+          'EX',
+          lockTtl,
+          'NX',
+        );
         if (!acquired) {
+          // Another execution holds this tick — possibly a worker that crashed
+          // after locking but before scheduling. Schedule the next tick anyway;
+          // #scheduleCronNextTick is NX-guarded, so a live holder can't double-schedule.
+          await this.#scheduleCronNextTick(jobEntry, queueName);
           await _ctx.ack();
           return;
         }
       }
 
-      const timeoutMs = this.handlerTimeouts.get(`${queueName}:${jobEntry.state.name}`);
+      const timeoutMs = this.handlerTimeouts.get(
+        `${queueName}:${jobEntry.state.name}`,
+      );
       await this.#runHandler(handler, handlerCtx, timeoutMs);
 
       const completedData = {
         ...processingData,
         logs: [
           ...(processingData.logs || []),
-          { message: this.JOB_STATUS_MESSAGES.completed, timestamp: Date.now() },
+          {
+            message: this.JOB_STATUS_MESSAGES.completed,
+            timestamp: Date.now(),
+          },
         ],
         status: 'completed',
       };
@@ -1050,13 +1291,18 @@ ${'─'.repeat(40)}
 
       const execId = genExecId();
       const completedKey = `queues:${queueName}:${jobId}:completed:${execId}`;
-      await this.transitionState(processingKey, completedKey, JSON.stringify(completedData));
+      await this.transitionState(
+        processingKey,
+        completedKey,
+        JSON.stringify(completedData),
+      );
 
       this.#notifyJobFinished({ jobId, queue: queueName, status: 'completed' });
 
       await this.#scheduleCronNextTick(jobEntry, queueName);
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      const errorMessage = err.message;
 
       const failedData = {
         ...jobEntry,
@@ -1064,24 +1310,36 @@ ${'─'.repeat(40)}
         timestamp: Date.now(),
         errors: [{
           message: errorMessage,
-          stack: error instanceof Error ? error.stack : undefined,
+          stack: err.stack,
           timestamp: Date.now(),
         }],
       };
       this.#trimLogs(failedData);
 
       const execId = genExecId();
-      const failedKey = `queues:${queueName}:${jobEntry.id}:failed:${execId}`;
+      const failedKey = `queues:${queueName}:${jobId}:failed:${execId}`;
       const processingKey = `queues:${queueName}:${jobId}:processing`;
-      await this.transitionState(processingKey, failedKey, JSON.stringify(failedData));
+      await this.transitionState(
+        processingKey,
+        failedKey,
+        JSON.stringify(failedData),
+      );
 
-      const isConfigError = errorMessage.includes('No handler found') ||
-        errorMessage.includes('No handlers registered') ||
-        errorMessage.includes('is undefined');
-
-      const willRetry = jobEntry.retryCount > 0 && !isConfigError;
+      // Must mirror the Processor's actual retry decision — shouldRetryJob is
+      // the shared source of truth. A mismatch here either hangs emitAndWait
+      // (notification never sent) or fires `failed` for a job that will retry.
+      const willRetry = shouldRetryJob(
+        jobEntry,
+        err,
+        this.processorOptions?.retry,
+      );
       if (!willRetry) {
-        this.#notifyJobFinished({ jobId: jobEntry.id, queue: queueName, status: 'failed', error: errorMessage });
+        this.#notifyJobFinished({
+          jobId,
+          queue: queueName,
+          status: 'failed',
+          error: errorMessage,
+        });
       }
 
       await this.#scheduleCronNextTick(jobEntry, queueName);
@@ -1154,7 +1412,12 @@ ${'─'.repeat(40)}
     let timer!: ReturnType<typeof setTimeout>;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(
-        () => reject(new Error(`[hound] Job "${ctx.name}" timed out after ${timeoutMs}ms`)),
+        () =>
+          reject(
+            new Error(
+              `[hound] Job "${ctx.name}" timed out after ${timeoutMs}ms`,
+            ),
+          ),
         timeoutMs,
       );
     });
@@ -1168,10 +1431,16 @@ ${'─'.repeat(40)}
 
   // ─── Socket context (stub) ────────────────────────────────────────────────
 
-  #createSocketContext(_id: string, _event: string, _queue: string): JobSocketContext {
+  #createSocketContext(
+    _id: string,
+    _event: string,
+    _queue: string,
+  ): JobSocketContext {
     return {
       update: () => {
-        throw new Error('ctx.socket.update() is not supported — use emitAndWait or poll job state.');
+        throw new Error(
+          'ctx.socket.update() is not supported — use emitAndWait or poll job state.',
+        );
       },
     };
   }
@@ -1184,20 +1453,25 @@ ${'─'.repeat(40)}
 
     const shutdown = async (signal: string) => {
       debug(`Received ${signal}, shutting down gracefully...`);
-      await Promise.race([this.stop(), new Promise<void>((r) => setTimeout(r, 3000))]);
+      await Promise.race([
+        this.stop(),
+        new Promise<void>((r) => setTimeout(r, 3000)),
+      ]);
       // Disconnect Redis so the ioredis TCP socket doesn't keep the event loop alive.
       // After this, the event loop drains naturally and the process exits on its own —
       // which is what the Deno watcher expects to trigger a restart.
-      try { this.db.disconnect(); } catch { /* ignore */ }
+      try {
+        this.db.disconnect();
+      } catch { /* ignore */ }
       debug('Shutdown complete');
       // SIGINT = user pressed Ctrl+C → force exit immediately.
       // SIGTERM = watcher restart or Docker stop → let event loop drain so watcher can restart.
       if (signal === 'SIGINT') {
         if (typeof Deno !== 'undefined') {
-          // @ts-ignore
+          // @ts-ignore: runtime-specific global — typechecked under one runtime only
           Deno.exit(0);
         } else if (typeof process !== 'undefined') {
-          // @ts-ignore
+          // @ts-ignore: runtime-specific global — typechecked under one runtime only
           process.exit(0);
         }
       }
@@ -1208,14 +1482,14 @@ ${'─'.repeat(40)}
       const onSigterm = () => shutdown('SIGTERM');
       this.signalHandlers.set('SIGINT', onSigint);
       this.signalHandlers.set('SIGTERM', onSigterm);
-      // @ts-ignore
+      // @ts-ignore: runtime-specific global — typechecked under one runtime only
       Deno.addSignalListener('SIGINT', onSigint);
-      // @ts-ignore
+      // @ts-ignore: runtime-specific global — typechecked under one runtime only
       Deno.addSignalListener('SIGTERM', onSigterm);
     } else if (typeof process !== 'undefined') {
-      // @ts-ignore
+      // @ts-ignore: runtime-specific global — typechecked under one runtime only
       process.on('SIGINT', () => shutdown('SIGINT'));
-      // @ts-ignore
+      // @ts-ignore: runtime-specific global — typechecked under one runtime only
       process.on('SIGTERM', () => shutdown('SIGTERM'));
     }
   }

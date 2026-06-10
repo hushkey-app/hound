@@ -2,7 +2,7 @@
  * HTTP gateway integration tests — spins up a real Deno.serve on port 0
  * and makes actual fetch calls. No Redis required.
  */
-import { assert, assertEquals } from 'jsr:@std/assert';
+import { assert, assertEquals } from 'jsr:@std/assert@1';
 import { createGateway } from '../libs/gateways/gateway.ts';
 import { HoundManagement } from '../libs/hound-management/mod.ts';
 import { makeDb } from './helpers.ts';
@@ -11,7 +11,9 @@ import { makeDb } from './helpers.ts';
 
 let jobSeq = 0;
 type CapturedBatch = { event: string; data?: unknown; options?: unknown };
-function mockHound(opts: { failOn?: string; capture?: { batch?: CapturedBatch[] } } = {}) {
+function mockHound(
+  opts: { failOn?: string; capture?: { batch?: CapturedBatch[] } } = {},
+) {
   return {
     emitAsync: async (event: string) => {
       if (opts.failOn === event) throw new Error(`forced failure on ${event}`);
@@ -76,27 +78,31 @@ Deno.test('POST /emit returns 400 when event is missing', () =>
   }));
 
 Deno.test('POST /emit returns 500 when hound.emitAsync throws', () =>
-  withGateway(mockHound({ failOn: 'broken.event' }), undefined, async (base) => {
-    const res = await fetch(`${base}/emit`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ event: 'broken.event' }),
-    });
-    assertEquals(res.status, 500);
-    const body = await res.json() as { error: string };
-    assert(body.error.includes('forced failure'));
-  }));
+  withGateway(
+    mockHound({ failOn: 'broken.event' }),
+    undefined,
+    async (base) => {
+      const res = await fetch(`${base}/emit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event: 'broken.event' }),
+      });
+      assertEquals(res.status, 500);
+      const body = await res.json() as { error: string };
+      assert(body.error.includes('forced failure'));
+    },
+  ));
 
-Deno.test('POST /emit returns JSON { error } on malformed request body', () =>
+Deno.test('POST /emit returns 400 on malformed request body', () =>
   withGateway(mockHound(), undefined, async (base) => {
     const res = await fetch(`${base}/emit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: 'not-json{{',
     });
-    assertEquals(res.status, 500);
+    assertEquals(res.status, 400);
     const body = await res.json() as { error: string };
-    assert(typeof body.error === 'string' && body.error.length > 0);
+    assert(body.error.includes('invalid JSON'));
   }));
 
 // ─── POST /emit/batch ─────────────────────────────────────────────────────────
@@ -141,30 +147,41 @@ Deno.test('POST /emit/batch returns 400 with offending index when entry missing 
     });
     assertEquals(res.status, 400);
     const body = await res.json() as { error: string };
-    assert(body.error.includes('jobs[1]'), `expected error to reference jobs[1], got: ${body.error}`);
+    assert(
+      body.error.includes('jobs[1]'),
+      `expected error to reference jobs[1], got: ${body.error}`,
+    );
   }));
 
 Deno.test('POST /emit/batch forwards data + options to hound.emitBatch unchanged', () => {
   const captured: CapturedBatch[] = [];
-  return withGateway(mockHound({ capture: { batch: captured } }), undefined, async (base) => {
-    const res = await fetch(`${base}/emit/batch`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify([
-        {
-          event: 'order.placed',
-          data: { orderId: 42 },
-          options: { queue: 'priority', priority: 10, attempts: 3 },
-        },
-      ]),
-    });
-    assertEquals(res.status, 200);
-    await res.body?.cancel();
-    assertEquals(captured.length, 1);
-    assertEquals(captured[0].event, 'order.placed');
-    assertEquals(captured[0].data, { orderId: 42 });
-    assertEquals(captured[0].options, { queue: 'priority', priority: 10, attempts: 3 });
-  });
+  return withGateway(
+    mockHound({ capture: { batch: captured } }),
+    undefined,
+    async (base) => {
+      const res = await fetch(`${base}/emit/batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify([
+          {
+            event: 'order.placed',
+            data: { orderId: 42 },
+            options: { queue: 'priority', priority: 10, attempts: 3 },
+          },
+        ]),
+      });
+      assertEquals(res.status, 200);
+      await res.body?.cancel();
+      assertEquals(captured.length, 1);
+      assertEquals(captured[0].event, 'order.placed');
+      assertEquals(captured[0].data, { orderId: 42 });
+      assertEquals(captured[0].options, {
+        queue: 'priority',
+        priority: 10,
+        attempts: 3,
+      });
+    },
+  );
 });
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
@@ -240,9 +257,19 @@ async function seedJob(
     id: jobId,
     state: { name: 'test.event', queue, data: {}, options: {} },
     status,
-    delayUntil: 0, lockUntil: 0, priority: 0, retryCount: 0, retryDelayMs: 1000,
-    retryBackoff: 'fixed', retriedAttempts: 0, repeatCount: 0, repeatDelayMs: 0,
-    logs: [], errors: [], timestamp: Date.now(), paused: false,
+    delayUntil: 0,
+    lockUntil: 0,
+    priority: 0,
+    retryCount: 0,
+    retryDelayMs: 1000,
+    retryBackoff: 'fixed',
+    retriedAttempts: 0,
+    repeatCount: 0,
+    repeatDelayMs: 0,
+    logs: [],
+    errors: [],
+    timestamp: Date.now(),
+    paused: false,
     ...overrides,
   };
   const key = status === 'completed' || status === 'failed'
@@ -310,14 +337,18 @@ Deno.test('GET /management/jobs/:queue/:jobId returns null for missing job', () 
 Deno.test('DELETE /management/jobs/:queue/:jobId deletes and returns { deleted: true }', () =>
   withMgmtGateway(async (base, db) => {
     await seedJob(db, 'default', 'job-1', 'waiting');
-    const res = await fetch(`${base}/management/jobs/default/job-1`, { method: 'DELETE' });
+    const res = await fetch(`${base}/management/jobs/default/job-1`, {
+      method: 'DELETE',
+    });
     assertEquals(res.status, 200);
     assertEquals(await res.json(), { deleted: true });
   }));
 
 Deno.test('DELETE /management/jobs/:queue/:jobId returns { deleted: false } for missing job', () =>
   withMgmtGateway(async (base) => {
-    const res = await fetch(`${base}/management/jobs/default/ghost`, { method: 'DELETE' });
+    const res = await fetch(`${base}/management/jobs/default/ghost`, {
+      method: 'DELETE',
+    });
     assertEquals(res.status, 200);
     assertEquals(await res.json(), { deleted: false });
   }));
@@ -327,7 +358,10 @@ Deno.test('DELETE /management/jobs/:queue/:jobId returns { deleted: false } for 
 Deno.test('POST /management/jobs/:queue/:jobId/pause pauses a waiting job', () =>
   withMgmtGateway(async (base, db) => {
     await seedJob(db, 'default', 'job-1', 'waiting');
-    const res = await fetch(`${base}/management/jobs/default/job-1/pause`, { method: 'POST', headers: H });
+    const res = await fetch(`${base}/management/jobs/default/job-1/pause`, {
+      method: 'POST',
+      headers: H,
+    });
     assertEquals(res.status, 200);
     const job = await res.json() as any;
     assertEquals(job.paused, true);
@@ -336,7 +370,10 @@ Deno.test('POST /management/jobs/:queue/:jobId/pause pauses a waiting job', () =
 Deno.test('POST /management/jobs/:queue/:jobId/pause returns 500 for non-pauseable job', () =>
   withMgmtGateway(async (base, db) => {
     await seedJob(db, 'default', 'job-1', 'processing');
-    const res = await fetch(`${base}/management/jobs/default/job-1/pause`, { method: 'POST', headers: H });
+    const res = await fetch(`${base}/management/jobs/default/job-1/pause`, {
+      method: 'POST',
+      headers: H,
+    });
     assertEquals(res.status, 500);
     const body = await res.json() as any;
     assert(body.error.includes('Cannot pause'));
@@ -346,8 +383,14 @@ Deno.test('POST /management/jobs/:queue/:jobId/pause returns 500 for non-pauseab
 
 Deno.test('POST /management/jobs/:queue/:jobId/resume resumes a paused job', () =>
   withMgmtGateway(async (base, db) => {
-    await seedJob(db, 'default', 'job-1', 'waiting', { paused: true, delayUntil: Number.MAX_SAFE_INTEGER });
-    const res = await fetch(`${base}/management/jobs/default/job-1/resume`, { method: 'POST', headers: H });
+    await seedJob(db, 'default', 'job-1', 'waiting', {
+      paused: true,
+      delayUntil: Number.MAX_SAFE_INTEGER,
+    });
+    const res = await fetch(`${base}/management/jobs/default/job-1/resume`, {
+      method: 'POST',
+      headers: H,
+    });
     assertEquals(res.status, 200);
     const job = await res.json() as any;
     assertEquals(job.paused, false);
@@ -382,15 +425,24 @@ Deno.test('GET /management/queues/:queue/stats returns per-status counts', () =>
 
 Deno.test('POST /management/queues/:queue/pause pauses the queue', () =>
   withMgmtGateway(async (base) => {
-    const res = await fetch(`${base}/management/queues/default/pause`, { method: 'POST', headers: H });
+    const res = await fetch(`${base}/management/queues/default/pause`, {
+      method: 'POST',
+      headers: H,
+    });
     assertEquals(res.status, 200);
     assertEquals(await res.json(), { ok: true });
   }));
 
 Deno.test('POST /management/queues/:queue/resume resumes the queue', () =>
   withMgmtGateway(async (base) => {
-    await (await fetch(`${base}/management/queues/default/pause`, { method: 'POST', headers: H })).body?.cancel();
-    const res = await fetch(`${base}/management/queues/default/resume`, { method: 'POST', headers: H });
+    await (await fetch(`${base}/management/queues/default/pause`, {
+      method: 'POST',
+      headers: H,
+    })).body?.cancel();
+    const res = await fetch(`${base}/management/queues/default/resume`, {
+      method: 'POST',
+      headers: H,
+    });
     assertEquals(res.status, 200);
     assertEquals(await res.json(), { ok: true });
   }));
@@ -398,10 +450,199 @@ Deno.test('POST /management/queues/:queue/resume resumes the queue', () =>
 Deno.test('POST /management/queues/:queue/reset clears the queue', () =>
   withMgmtGateway(async (base, db) => {
     await seedJob(db, 'default', 'job-1', 'waiting');
-    const res = await fetch(`${base}/management/queues/default/reset`, { method: 'POST', headers: H });
+    const res = await fetch(`${base}/management/queues/default/reset`, {
+      method: 'POST',
+      headers: H,
+    });
     assertEquals(res.status, 200);
     assertEquals(await res.json(), { ok: true });
     // Verify queue is empty
-    const jobs = await fetch(`${base}/management/jobs?queue=default`).then((r) => r.json()) as any[];
+    const jobs = await fetch(`${base}/management/jobs?queue=default`).then((
+      r,
+    ) => r.json()) as any[];
     assertEquals(jobs.length, 0);
+  }));
+
+// ─── POST /emit/wait ──────────────────────────────────────────────────────────
+
+import { HoundTimeoutError } from '../utils/errors.ts';
+
+function mockWaitHound(behavior: 'complete' | 'fail' | 'timeout') {
+  return {
+    emitAndWait: async (
+      _event: string,
+      _data: unknown,
+      options?: { id?: string; timeoutMs?: number },
+    ) => {
+      if (behavior === 'fail') throw new Error('handler exploded');
+      if (behavior === 'timeout') {
+        throw new HoundTimeoutError(
+          `Job ${options?.id} timed out after ${options?.timeoutMs}ms`,
+        );
+      }
+      return options?.id ?? 'job-wait-1';
+    },
+  } as any;
+}
+
+Deno.test('POST /emit/wait returns { jobId, status: completed } on success', () =>
+  withGateway(mockWaitHound('complete'), undefined, async (base) => {
+    const res = await fetch(`${base}/emit/wait`, {
+      method: 'POST',
+      headers: H,
+      body: JSON.stringify({ event: 'user.created', data: { id: 1 } }),
+    });
+    assertEquals(res.status, 200);
+    const body = await res.json() as any;
+    assertEquals(body.status, 'completed');
+    assert(typeof body.jobId === 'string' && body.jobId.length > 0);
+  }));
+
+Deno.test('POST /emit/wait reports job failure with status failed + error', () =>
+  withGateway(mockWaitHound('fail'), undefined, async (base) => {
+    const res = await fetch(`${base}/emit/wait`, {
+      method: 'POST',
+      headers: H,
+      body: JSON.stringify({ event: 'user.created', data: { id: 1 } }),
+    });
+    assertEquals(res.status, 200);
+    const body = await res.json() as any;
+    assertEquals(body.status, 'failed');
+    assert(body.error.includes('handler exploded'));
+    assert(typeof body.jobId === 'string');
+  }));
+
+Deno.test('POST /emit/wait returns 408 on wait timeout', () =>
+  withGateway(mockWaitHound('timeout'), undefined, async (base) => {
+    const res = await fetch(`${base}/emit/wait`, {
+      method: 'POST',
+      headers: H,
+      body: JSON.stringify({ event: 'user.created', data: { id: 1 } }),
+    });
+    assertEquals(res.status, 408);
+    const body = await res.json() as any;
+    assert(body.error.includes('timed out'));
+  }));
+
+Deno.test('POST /emit/wait returns 400 when event is missing', () =>
+  withGateway(mockWaitHound('complete'), undefined, async (base) => {
+    const res = await fetch(`${base}/emit/wait`, {
+      method: 'POST',
+      headers: H,
+      body: JSON.stringify({ data: {} }),
+    });
+    assertEquals(res.status, 400);
+    await res.body?.cancel();
+  }));
+
+// ─── Body size cap ────────────────────────────────────────────────────────────
+
+Deno.test('request body over maxBodyBytes is rejected 413', async () => {
+  const server = createGateway({
+    port: 0,
+    hound: mockHound(),
+    maxBodyBytes: 64,
+  });
+  const base = `http://127.0.0.1:${(server.addr as Deno.NetAddr).port}`;
+  try {
+    const res = await fetch(`${base}/emit`, {
+      method: 'POST',
+      headers: H,
+      body: JSON.stringify({
+        event: 'big.payload',
+        data: { blob: 'x'.repeat(200) },
+      }),
+    });
+    assertEquals(res.status, 413);
+    const body = await res.json() as any;
+    assert(body.error.includes('exceeds'));
+  } finally {
+    await server.shutdown();
+  }
+});
+
+// ─── GET /events (SSE) ────────────────────────────────────────────────────────
+
+function mockSseHound() {
+  const listeners = new Set<(p: unknown) => void>();
+  const h = {
+    fire: (p: unknown) => {
+      for (const cb of listeners) cb(p);
+    },
+  } as any;
+  h[Symbol.for('hound.subscribeJobFinished')] = (cb: (p: unknown) => void) => {
+    listeners.add(cb);
+    return () => listeners.delete(cb);
+  };
+  return h;
+}
+
+Deno.test('GET /events streams job-finished payloads as SSE', async () => {
+  const hound = mockSseHound();
+  const server = createGateway({ port: 0, hound });
+  const base = `http://127.0.0.1:${(server.addr as Deno.NetAddr).port}`;
+  try {
+    const res = await fetch(`${base}/events`);
+    assertEquals(res.headers.get('content-type'), 'text/event-stream');
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+
+    let buf = decoder.decode((await reader.read()).value);
+    assert(buf.includes(': connected'));
+
+    hound.fire({ jobId: 'j1', queue: 'default', status: 'completed' });
+    while (!buf.includes('job.finished')) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value);
+    }
+    assert(buf.includes('event: job.finished'));
+    assert(buf.includes('"jobId":"j1"'));
+    await reader.cancel();
+  } finally {
+    await server.shutdown();
+  }
+});
+
+Deno.test('server.shutdown() closes open SSE connections instead of hanging', async () => {
+  const hound = mockSseHound();
+  const server = createGateway({ port: 0, hound });
+  const base = `http://127.0.0.1:${(server.addr as Deno.NetAddr).port}`;
+  const res = await fetch(`${base}/events`);
+  const reader = res.body!.getReader();
+  await reader.read(); // ': connected'
+
+  await server.shutdown(); // must resolve — SSE cleanup closes the stream
+
+  while (!(await reader.read()).done) { /* drain remaining bytes */ }
+});
+
+// ─── GET /management/jobs pagination ──────────────────────────────────────────
+
+Deno.test('GET /management/jobs?limit=&offset= paginates results', () =>
+  withMgmtGateway(async (base, db) => {
+    const now = Date.now();
+    await seedJob(db, 'default', 'job-1', 'waiting', { timestamp: now - 2000 });
+    await seedJob(db, 'default', 'job-2', 'waiting', { timestamp: now - 1000 });
+    await seedJob(db, 'default', 'job-3', 'waiting', { timestamp: now });
+
+    const page1 = await fetch(`${base}/management/jobs?limit=2`).then((r) =>
+      r.json()
+    ) as any[];
+    assertEquals(page1.length, 2);
+    assertEquals(page1[0].id, 'job-3'); // newest first
+
+    const page2 = await fetch(`${base}/management/jobs?limit=2&offset=2`).then((
+      r,
+    ) => r.json()) as any[];
+    assertEquals(page2.length, 1);
+    assertEquals(page2[0].id, 'job-1');
+  }));
+
+Deno.test('GET /management/jobs rejects non-integer limit with 400', () =>
+  withMgmtGateway(async (base) => {
+    const res = await fetch(`${base}/management/jobs?limit=abc`);
+    assertEquals(res.status, 400);
+    const body = await res.json() as any;
+    assert(body.error.includes('limit'));
   }));

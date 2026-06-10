@@ -33,18 +33,11 @@
     "semiColons": true
   },
   "lint": {
-    "include": [
-      "core/"
-    ],
-    "exclude": [
-      "examples/",
-      "core/",
-      "www/"
-    ],
     "rules": {
       "exclude": [
         "no-unused-vars",
-        "no-explicit-any"
+        "no-explicit-any",
+        "require-await"
       ],
       "tags": [
         "recommended"

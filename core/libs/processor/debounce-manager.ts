@@ -7,11 +7,17 @@ import type { Message } from '../../types/index.ts';
 
 /**
  * Manages debouncing of message processing. Tracks recently processed messages to prevent duplicates.
+ *
+ * Scope: per-process. The tracking map lives in this worker's memory — multiple
+ * workers on the same queue do NOT share debounce state, so a duplicate can
+ * still run once per worker. Stale entries are evicted opportunistically on
+ * shouldProcess() calls, so the map stays bounded without a background timer.
  */
 export class DebounceManager {
   private readonly windowMs: number;
   private readonly keyFn: (message: Message) => string;
   private readonly processedKeys = new Map<string, number>();
+  private lastCleanup = Date.now();
 
   /**
    * Create a debounce manager with a time window and optional key function.
@@ -31,6 +37,7 @@ export class DebounceManager {
    * Returns true if message should be processed, false if debounced
    */
   shouldProcess(message: Message): boolean {
+    this.maybeCleanup();
     const key = this.keyFn(message);
     const lastProcessed = this.processedKeys.get(key);
 
@@ -58,6 +65,17 @@ export class DebounceManager {
   markProcessed(message: Message): void {
     const key = this.keyFn(message);
     this.processedKeys.set(key, Date.now());
+  }
+
+  /**
+   * Runs cleanup() at most once per 2x window — keeps the map bounded
+   * without a dedicated timer or any caller having to remember to sweep.
+   */
+  private maybeCleanup(): void {
+    const now = Date.now();
+    if (now - this.lastCleanup < this.windowMs * 2) return;
+    this.lastCleanup = now;
+    this.cleanup();
   }
 
   /**

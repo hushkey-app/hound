@@ -1,7 +1,7 @@
 /**
  * Middleware tests — hound.use() integration, run against InMemoryStorage.
  */
-import { assertEquals, assertRejects } from 'jsr:@std/assert';
+import { assertEquals, assertRejects } from 'jsr:@std/assert@1';
 import { withHound } from './helpers.ts';
 
 Deno.test('middleware runs before and after the handler', () =>

@@ -3,7 +3,7 @@
  * cron ticks on restart / Reaper recovery, and catchUp:true preserves the
  * legacy backfill-once behaviour.
  */
-import { assert, assertEquals } from 'jsr:@std/assert';
+import { assert, assertEquals } from 'jsr:@std/assert@1';
 import { Hound } from '../libs/hound/mod.ts';
 import { genJobIdSync } from '../utils/id-gen.ts';
 import { withHound, sleep } from './helpers.ts';

@@ -1,7 +1,7 @@
 /**
  * Per-handler timeout tests — run against InMemoryStorage.
  */
-import { assert, assertEquals, assertRejects } from 'jsr:@std/assert';
+import { assert, assertEquals, assertRejects } from 'jsr:@std/assert@1';
 import { withHound } from './helpers.ts';
 
 Deno.test('job completes normally when handler finishes before timeout', () =>

@@ -1,9 +1,13 @@
-import { assertEquals } from 'jsr:@std/assert';
+import { assertEquals } from 'jsr:@std/assert@1';
 import { DebounceManager } from '../libs/processor/debounce-manager.ts';
 import { sleep } from './helpers.ts';
 
 const msg = (id: string, data: Record<string, unknown> = {}) =>
-  ({ id, queue: 'default', data }) as unknown as import('../types/index.ts').Message;
+  ({
+    id,
+    queue: 'default',
+    data,
+  }) as unknown as import('../types/index.ts').Message;
 
 Deno.test('DebounceManager: allows first-ever call (no history)', () => {
   const dm = new DebounceManager(60);
@@ -27,7 +31,7 @@ Deno.test('DebounceManager: independent keys do not interfere', () => {
   const dm = new DebounceManager(60);
   dm.markProcessed(msg('a'));
   assertEquals(dm.shouldProcess(msg('a')), false); // debounced
-  assertEquals(dm.shouldProcess(msg('b')), true);  // untouched
+  assertEquals(dm.shouldProcess(msg('b')), true); // untouched
 });
 
 Deno.test('DebounceManager: custom keyFn groups by derived key', () => {
@@ -53,4 +57,14 @@ Deno.test('DebounceManager: cleanup does not remove entries within 2x window', (
   dm.markProcessed(msg('a'));
   dm.cleanup();
   assertEquals(dm.size, 1); // still within window
+});
+
+Deno.test('DebounceManager: stale entries are evicted automatically via shouldProcess', async () => {
+  const dm = new DebounceManager(0.01); // 10ms window
+  dm.markProcessed(msg('a'));
+  dm.markProcessed(msg('b'));
+  assertEquals(dm.size, 2);
+  await sleep(30); // older than 2x window — eligible for eviction
+  dm.shouldProcess(msg('c')); // opportunistic cleanup runs here — no manual cleanup() call
+  assertEquals(dm.size, 0);
 });

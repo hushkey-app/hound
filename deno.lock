@@ -5,6 +5,7 @@
     "jsr:@deno/loader@~0.3.10": "0.3.14",
     "jsr:@hushkey/howl@~0.5.1": "0.5.1",
     "jsr:@std/assert@*": "1.0.19",
+    "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/bytes@^1.0.6": "1.0.6",
     "jsr:@std/encoding@1": "1.0.10",
     "jsr:@std/encoding@^1.0.10": "1.0.10",

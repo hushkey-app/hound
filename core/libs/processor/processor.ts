@@ -9,14 +9,34 @@
  */
 import { Consumer } from '../consumer/consumer.ts';
 import { QueueStore } from '../consumer/queue-store.ts';
+import { isConfigError } from '../../utils/errors.ts';
 import type {
   Message,
   MessageContext,
   ProcessorOptions,
   RedisConnection,
+  RetryConfig,
 } from '../../types/index.ts';
 
 const MAX_RETRY_DELAY_MS = 3_600_000;
+
+/**
+ * Single source of truth for "will this failed job be retried?".
+ * Used both by the Processor (to actually schedule the retry) and by Hound
+ * (to decide whether to fire the terminal `failed` notification). The two
+ * must agree — if they diverge, emitAndWait hangs until timeout and
+ * management.events.job.failed never fires for terminally failed jobs.
+ */
+export function shouldRetryJob(
+  jobData: { retryCount?: number; retriedAttempts?: number },
+  error: Error,
+  retry?: RetryConfig,
+): boolean {
+  if (isConfigError(error)) return false;
+  if ((jobData.retryCount ?? 0) <= 0) return false;
+  return !retry?.shouldRetry ||
+    retry.shouldRetry(error, (jobData.retriedAttempts ?? 0) + 1);
+}
 
 export class Processor {
   private readonly consumer: Consumer;
@@ -34,7 +54,10 @@ export class Processor {
     this.maxLogsPerJob = options.maxLogsPerJob;
 
     const wrappedHandler = this.#createWrappedHandler(options.consumer.handler);
-    this.consumer = new Consumer({ ...options.consumer, handler: wrappedHandler });
+    this.consumer = new Consumer({
+      ...options.consumer,
+      handler: wrappedHandler,
+    });
   }
 
   /**
@@ -62,20 +85,17 @@ export class Processor {
     const jobData = message.data as any;
     const retryCount = jobData.retryCount ?? 0;
     const retriedAttempts = jobData.retriedAttempts ?? 0;
-    const retryDelayMs = jobData.retryDelayMs ?? this.retryConfig?.retryDelayMs ?? 1000;
-    const retryBackoff = jobData.retryBackoff ?? this.retryConfig?.retryBackoff ?? 'fixed';
+    const retryDelayMs = jobData.retryDelayMs ??
+      this.retryConfig?.retryDelayMs ?? 1000;
+    const retryBackoff = jobData.retryBackoff ??
+      this.retryConfig?.retryBackoff ?? 'fixed';
 
-    const isConfigError = error.message.includes('No handler found') ||
-      error.message.includes('No handlers registered') ||
-      error.message.includes('is undefined');
-
-    const willRetry = retryCount > 0 &&
-      !isConfigError &&
-      (!this.retryConfig?.shouldRetry || this.retryConfig.shouldRetry(error, retriedAttempts + 1));
-
-    if (willRetry) {
+    if (shouldRetryJob(jobData, error, this.retryConfig)) {
       const backoffMs = retryBackoff === 'exponential'
-        ? Math.min(retryDelayMs * Math.pow(2, retriedAttempts), MAX_RETRY_DELAY_MS)
+        ? Math.min(
+          retryDelayMs * Math.pow(2, retriedAttempts),
+          MAX_RETRY_DELAY_MS,
+        )
         : retryDelayMs;
 
       const retryScore = Date.now() + backoffMs;
@@ -89,7 +109,9 @@ export class Processor {
         logs: [
           ...(jobData.logs ?? []),
           {
-            message: `retrying — attempt ${retriedAttempts + 1}, delay ${backoffMs}ms`,
+            message: `retrying — attempt ${
+              retriedAttempts + 1
+            }, delay ${backoffMs}ms`,
             timestamp: Date.now(),
           },
         ],
@@ -97,7 +119,10 @@ export class Processor {
       this.#trimLogs(retryJob);
 
       // Write delayed state key so getJobData finds the job on next claim
-      await this.#setKey(`queues:${message.queue}:${message.id}:delayed`, JSON.stringify(retryJob));
+      await this.#setKey(
+        `queues:${message.queue}:${message.id}:delayed`,
+        JSON.stringify(retryJob),
+      );
       await this.queueStore.enqueue(message.queue, message.id, retryScore);
       await ctx.ack();
       return;
@@ -117,7 +142,10 @@ export class Processor {
 
   #trimLogs(jobEntry: { logs?: unknown[] }): void {
     const max = this.maxLogsPerJob;
-    if (typeof max !== 'number' || max <= 0 || !jobEntry.logs?.length || jobEntry.logs.length <= max) return;
+    if (
+      typeof max !== 'number' || max <= 0 || !jobEntry.logs?.length ||
+      jobEntry.logs.length <= max
+    ) return;
     jobEntry.logs.splice(0, jobEntry.logs.length - max);
   }
 

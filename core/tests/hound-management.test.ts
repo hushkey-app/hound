@@ -2,7 +2,7 @@
  * HoundManagement tests — run against InMemoryStorage, no Redis needed.
  * Tests that require a live Hound use withHound().
  */
-import { assert, assertEquals, assertRejects } from 'jsr:@std/assert';
+import { assert, assertEquals, assertRejects } from 'jsr:@std/assert@1';
 import { HoundManagement } from '../libs/hound-management/mod.ts';
 import { InMemoryStorage } from '../libs/storage/in-memory.ts';
 import { makeDb, sleep, withHound } from './helpers.ts';
@@ -89,12 +89,27 @@ Deno.test('jobs.find: deduplicates terminal jobs — latest timestamp wins', asy
     id: 'job-dup',
     state: { name: 'test.event', queue: 'default', data: {}, options: {} },
     status: 'completed',
-    delayUntil: 0, lockUntil: 0, priority: 0, retryCount: 0, retryDelayMs: 1000,
-    retryBackoff: 'fixed', retriedAttempts: 0, repeatCount: 0, repeatDelayMs: 0,
-    logs: [], errors: [], paused: false,
+    delayUntil: 0,
+    lockUntil: 0,
+    priority: 0,
+    retryCount: 0,
+    retryDelayMs: 1000,
+    retryBackoff: 'fixed',
+    retriedAttempts: 0,
+    repeatCount: 0,
+    repeatDelayMs: 0,
+    logs: [],
+    errors: [],
+    paused: false,
   };
-  await db.set('queues:default:job-dup:completed:exec1', JSON.stringify({ ...base, timestamp: now - 1000 }));
-  await db.set('queues:default:job-dup:completed:exec2', JSON.stringify({ ...base, timestamp: now }));
+  await db.set(
+    'queues:default:job-dup:completed:exec1',
+    JSON.stringify({ ...base, timestamp: now - 1000 }),
+  );
+  await db.set(
+    'queues:default:job-dup:completed:exec2',
+    JSON.stringify({ ...base, timestamp: now }),
+  );
 
   const m = makeManagement(db);
   const jobs = await m.api.jobs.find();
@@ -156,7 +171,11 @@ Deno.test('jobs.get: returns job record for existing key', async () => {
 Deno.test('jobs.get: throws for malformed key', async () => {
   const db = makeDb();
   const m = makeManagement(db);
-  await assertRejects(() => m.api.jobs.get('nocolon'), Error, 'key must be in format');
+  await assertRejects(
+    () => m.api.jobs.get('nocolon'),
+    Error,
+    'key must be in format',
+  );
 });
 
 // ─── jobs.delete() ────────────────────────────────────────────────────────────
@@ -207,7 +226,11 @@ Deno.test('jobs.pause: throws for non-waiting/delayed job', async () => {
   const db = makeDb();
   await seedJob(db, 'default', 'job-1', 'processing');
   const m = makeManagement(db);
-  await assertRejects(() => m.api.jobs.pause('default:job-1'), Error, 'Cannot pause');
+  await assertRejects(
+    () => m.api.jobs.pause('default:job-1'),
+    Error,
+    'Cannot pause',
+  );
 });
 
 // ─── jobs.resume() ────────────────────────────────────────────────────────────
@@ -237,8 +260,71 @@ Deno.test('jobs.resume: throws for non-paused job', async () => {
   const db = makeDb();
   await seedJob(db, 'default', 'job-1', 'waiting'); // paused:false by default
   const m = makeManagement(db);
-  await assertRejects(() => m.api.jobs.resume('default:job-1'), Error, 'not paused');
+  await assertRejects(
+    () => m.api.jobs.resume('default:job-1'),
+    Error,
+    'not paused',
+  );
 });
+
+// ─── jobs.pause()/resume() — payload integrity ───────────────────────────────
+
+Deno.test('jobs.pause/resume: preserve the raw state payload (state.name/queue/data intact)', async () => {
+  const db = makeDb();
+  await seedJob(db, 'default', 'job-1', 'waiting');
+  const m = makeManagement(db);
+
+  await m.api.jobs.pause('default:job-1');
+  let raw = JSON.parse((await db.get('queues:default:job-1:waiting'))!);
+  assertEquals(raw.state.name, 'test.event');
+  assertEquals(raw.state.queue, 'default');
+  assertEquals(raw.state.data, { x: 1 });
+  assertEquals(raw.paused, true);
+  assertEquals(raw.delayUntil, Number.MAX_SAFE_INTEGER);
+
+  await m.api.jobs.resume('default:job-1');
+  raw = JSON.parse((await db.get('queues:default:job-1:waiting'))!);
+  assertEquals(raw.state.name, 'test.event');
+  assertEquals(raw.paused, false);
+  assert(raw.delayUntil <= Date.now());
+});
+
+Deno.test('jobs.pause: re-scores the queue sorted set so the job is not claimable', async () => {
+  const db = makeDb();
+  await seedJob(db, 'default', 'job-1', 'waiting');
+  await db.zadd('queues:default:q', Date.now() - 1000, 'job-1'); // ready to claim
+  const m = makeManagement(db);
+
+  await m.api.jobs.pause('default:job-1');
+  assertEquals(
+    Number(await db.zscore('queues:default:q', 'job-1')),
+    Number.MAX_SAFE_INTEGER,
+  );
+
+  await m.api.jobs.resume('default:job-1');
+  const score = Number(await db.zscore('queues:default:q', 'job-1'));
+  assert(score <= Date.now(), 'resume should make the job claimable again');
+});
+
+Deno.test('jobs.pause/resume: resumed job still executes end-to-end', () =>
+  withHound(async (hound, db) => {
+    let ran = 0;
+    hound.on('pause.resume.e2e', async () => {
+      ran++;
+    });
+    await hound.start();
+
+    const jobId = await hound.emitAsync('pause.resume.e2e', { a: 1 }, {
+      delay: new Date(Date.now() + 60_000),
+    });
+    const m = new HoundManagement({ db, hound });
+    await m.api.jobs.pause(`default:${jobId}`);
+    await m.api.jobs.resume(`default:${jobId}`);
+
+    const deadline = Date.now() + 5000;
+    while (ran === 0 && Date.now() < deadline) await sleep(25);
+    assertEquals(ran, 1);
+  }));
 
 // ─── jobs.promote() ───────────────────────────────────────────────────────────
 
@@ -246,7 +332,11 @@ Deno.test('jobs.promote: throws without Hound instance', async () => {
   const db = makeDb();
   await seedJob(db, 'default', 'job-1', 'delayed');
   const m = makeManagement(db);
-  await assertRejects(() => m.api.jobs.promote('default:job-1'), Error, 'requires a Hound instance');
+  await assertRejects(
+    () => m.api.jobs.promote('default:job-1'),
+    Error,
+    'requires a Hound instance',
+  );
 });
 
 Deno.test('jobs.promote: returns null for nonexistent job', () =>
@@ -259,7 +349,11 @@ Deno.test('jobs.promote: throws for non-delayed/waiting job', () =>
   withHound(async (hound, db) => {
     await seedJob(db, 'default', 'job-1', 'processing');
     const m = new HoundManagement({ db, hound });
-    await assertRejects(() => m.api.jobs.promote('default:job-1'), Error, 'Cannot promote');
+    await assertRejects(
+      () => m.api.jobs.promote('default:job-1'),
+      Error,
+      'Cannot promote',
+    );
   }));
 
 Deno.test('jobs.promote: sets delayUntil to now and re-enqueues delayed job', () =>
@@ -276,7 +370,9 @@ Deno.test('jobs.promote: sets delayUntil to now and re-enqueues delayed job', ()
 Deno.test('jobs.promote: cron job runs early and recurrence survives', () =>
   withHound(async (hound, db) => {
     let runs = 0;
-    hound.on('cron.event', async () => { runs++; });
+    hound.on('cron.event', async () => {
+      runs++;
+    });
     await hound.start();
 
     // Seed a cron tick scheduled far in the future.
@@ -305,7 +401,10 @@ Deno.test('jobs.promote: cron job runs early and recurrence survives', () =>
     // After running, #scheduleCronNextTick should re-seed a future delayed entry
     // for the same id (cron recurrence preserved — emit() would have killed it).
     const next = await db.get('queues:default:cron-1:delayed');
-    assert(next !== null, 'cron recurrence missing — next tick was not scheduled');
+    assert(
+      next !== null,
+      'cron recurrence missing — next tick was not scheduled',
+    );
     const parsed = JSON.parse(next);
     assertEquals(parsed.repeatCount, 1);
     assert(parsed.delayUntil > Date.now(), 'next tick should be in the future');
@@ -318,7 +417,11 @@ Deno.test('jobs.retry: throws without Hound instance', async () => {
   const db = makeDb();
   await seedJob(db, 'default', 'job-1', 'failed');
   const m = makeManagement(db);
-  await assertRejects(() => m.api.jobs.retry('default:job-1'), Error, 'requires a Hound instance');
+  await assertRejects(
+    () => m.api.jobs.retry('default:job-1'),
+    Error,
+    'requires a Hound instance',
+  );
 });
 
 Deno.test('jobs.retry: returns null for nonexistent job', () =>
@@ -331,17 +434,25 @@ Deno.test('jobs.retry: throws for non-failed job', () =>
   withHound(async (hound, db) => {
     await seedJob(db, 'default', 'job-1', 'completed');
     const m = new HoundManagement({ db, hound });
-    await assertRejects(() => m.api.jobs.retry('default:job-1'), Error, 'Cannot retry');
+    await assertRejects(
+      () => m.api.jobs.retry('default:job-1'),
+      Error,
+      'Cannot retry',
+    );
   }));
 
 Deno.test('jobs.retry: re-enqueues failed job and runs it to completion', () =>
   withHound(async (hound, db) => {
     let ran = false;
-    hound.on('test.event', async () => { ran = true; });
+    hound.on('test.event', async () => {
+      ran = true;
+    });
     await hound.start();
 
     // Seed a failed job
-    await seedJob(db, 'default', 'job-1', 'failed', { state: { name: 'test.event', queue: 'default', data: {}, options: {} } });
+    await seedJob(db, 'default', 'job-1', 'failed', {
+      state: { name: 'test.event', queue: 'default', data: {}, options: {} },
+    });
 
     const m = new HoundManagement({ db, hound });
     const result = await m.api.jobs.retry('default:job-1');
@@ -458,7 +569,14 @@ Deno.test('queues.stats: returns all zeros for empty queue', async () => {
   const db = makeDb();
   const m = makeManagement(db);
   const stats = await m.api.queues.stats('empty');
-  assertEquals(stats, { waiting: 0, delayed: 0, processing: 0, completed: 0, failed: 0, total: 0 });
+  assertEquals(stats, {
+    waiting: 0,
+    delayed: 0,
+    processing: 0,
+    completed: 0,
+    failed: 0,
+    total: 0,
+  });
 });
 
 Deno.test('queues.stats: counts each active status independently', async () => {
@@ -480,9 +598,19 @@ Deno.test('queues.stats: deduplicates terminal jobs by jobId', async () => {
     id: 'job-x',
     state: { name: 'test.event', queue: 'default', data: {}, options: {} },
     status: 'completed',
-    delayUntil: 0, lockUntil: 0, priority: 0, retryCount: 0, retryDelayMs: 1000,
-    retryBackoff: 'fixed', retriedAttempts: 0, repeatCount: 0, repeatDelayMs: 0,
-    logs: [], errors: [], paused: false, timestamp: Date.now(),
+    delayUntil: 0,
+    lockUntil: 0,
+    priority: 0,
+    retryCount: 0,
+    retryDelayMs: 1000,
+    retryBackoff: 'fixed',
+    retriedAttempts: 0,
+    repeatCount: 0,
+    repeatDelayMs: 0,
+    logs: [],
+    errors: [],
+    paused: false,
+    timestamp: Date.now(),
   };
   // Same jobId, two executions
   await db.set('queues:default:job-x:completed:exec1', JSON.stringify(base));
@@ -525,14 +653,18 @@ Deno.test('events.job.finished: throws without Hound instance', () => {
 Deno.test('events.job.finished: receives completed and failed events', () =>
   withHound(async (hound, db) => {
     hound.on('ok.event', async () => {});
-    hound.on('fail.event', async () => { throw new Error('oops'); });
+    hound.on('fail.event', async () => {
+      throw new Error('oops');
+    });
     await hound.start();
 
     const m = new HoundManagement({ db, hound });
     const received: string[] = [];
     const unsub = m.events.job.finished((p) => received.push(p.status));
 
-    await hound.emitAndWait('ok.event', {}, { timeoutMs: 3000 }).catch(() => {});
+    await hound.emitAndWait('ok.event', {}, { timeoutMs: 3000 }).catch(
+      () => {},
+    );
     // trigger a known-failing job and wait briefly
     hound.emit('fail.event', {});
     await sleep(500);
@@ -545,7 +677,9 @@ Deno.test('events.job.finished: receives completed and failed events', () =>
 Deno.test('events.job.completed: only fires for completed jobs', () =>
   withHound(async (hound, db) => {
     hound.on('ok.event2', async () => {});
-    hound.on('fail.event2', async () => { throw new Error('x'); });
+    hound.on('fail.event2', async () => {
+      throw new Error('x');
+    });
     await hound.start();
 
     const m = new HoundManagement({ db, hound });
@@ -563,7 +697,9 @@ Deno.test('events.job.completed: only fires for completed jobs', () =>
 Deno.test('events.job.failed: only fires for failed jobs', () =>
   withHound(async (hound, db) => {
     hound.on('ok.event3', async () => {});
-    hound.on('fail.event3', async () => { throw new Error('x'); });
+    hound.on('fail.event3', async () => {
+      throw new Error('x');
+    });
     await hound.start();
 
     const m = new HoundManagement({ db, hound });
@@ -591,3 +727,54 @@ Deno.test('events.job.finished: unsubscribe stops callback', () =>
     await hound.emitAndWait('unsub.event', {}, { timeoutMs: 3000 });
     assertEquals(count, 0);
   }));
+
+Deno.test('jobs.get: newest terminal execution wins (direct lookup, no full scan)', async () => {
+  const db = makeDb();
+  const now = Date.now();
+  await seedJob(db, 'default', 'job-g', 'completed', { timestamp: now - 1000 });
+  await db.set(
+    'queues:default:job-g:completed:exec2',
+    JSON.stringify({
+      id: 'job-g',
+      state: {
+        name: 'test.event',
+        queue: 'default',
+        data: { x: 1 },
+        options: {},
+      },
+      status: 'completed',
+      delayUntil: 0,
+      lockUntil: 0,
+      priority: 0,
+      retryCount: 0,
+      retryDelayMs: 1000,
+      retryBackoff: 'fixed',
+      retriedAttempts: 0,
+      repeatCount: 0,
+      repeatDelayMs: 0,
+      logs: [],
+      errors: [],
+      paused: false,
+      timestamp: now,
+    }),
+  );
+  const m = makeManagement(db);
+  const job = await m.api.jobs.get('default:job-g');
+  assert(job !== null);
+  assertEquals(job.execId, 'exec2');
+});
+
+Deno.test('jobs.find: limit and offset paginate after sorting', async () => {
+  const db = makeDb();
+  const now = Date.now();
+  await seedJob(db, 'default', 'job-1', 'waiting', { timestamp: now - 2000 });
+  await seedJob(db, 'default', 'job-2', 'waiting', { timestamp: now - 1000 });
+  await seedJob(db, 'default', 'job-3', 'waiting', { timestamp: now });
+  const m = makeManagement(db);
+
+  const page1 = await m.api.jobs.find({ limit: 2 });
+  assertEquals(page1.map((j) => j.id), ['job-3', 'job-2']); // newest first
+
+  const page2 = await m.api.jobs.find({ limit: 2, offset: 2 });
+  assertEquals(page2.map((j) => j.id), ['job-1']);
+});

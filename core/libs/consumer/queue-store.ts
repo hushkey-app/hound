@@ -55,7 +55,11 @@ export class QueueStore {
 
   /**
    * Fetch job data for a list of jobIds from a queue.
-   * Tries both :waiting and :delayed state keys — returns whichever is non-null.
+   * Tries :waiting, :delayed, then :processing state keys — returns whichever
+   * is non-null first. The :processing fallback covers jobs reclaimed by the
+   * Reaper after a worker crashed mid-execution: their state key was already
+   * transitioned to :processing, and without it the job would be ACKed away
+   * as "deleted externally" and silently lost.
    * Returns a map of jobId → raw JSON string.
    */
   async getJobData(
@@ -68,14 +72,16 @@ export class QueueStore {
     for (const id of jobIds) {
       pipe.get(`queues:${queue}:${id}:waiting`);
       pipe.get(`queues:${queue}:${id}:delayed`);
+      pipe.get(`queues:${queue}:${id}:processing`);
     }
     const results = await pipe.exec() as [Error | null, string | null][];
 
     const out = new Map<string, string>();
     for (let i = 0; i < jobIds.length; i++) {
-      const waiting = results[i * 2][1];
-      const delayed = results[i * 2 + 1][1];
-      const data = waiting ?? delayed;
+      const waiting = results[i * 3][1];
+      const delayed = results[i * 3 + 1][1];
+      const processing = results[i * 3 + 2][1];
+      const data = waiting ?? delayed ?? processing;
       if (data) out.set(jobIds[i], data);
     }
     return out;

@@ -10,6 +10,11 @@
  *   ["kv",   redisKey]          → string value
  *   ["zset", setKey, member]    → score (number)
  *
+ * Concurrency: single-process only. eval() (the claim path) reads then writes
+ * without a transaction, so two consumer processes sharing one KV store can
+ * claim the same job twice. Run one Hound process per Deno KV store; use the
+ * Redis backend for multi-worker deployments.
+ *
  * @module
  */
 
@@ -53,7 +58,10 @@ class DenoKvPipeline {
       try {
         results.push([null, await op()]);
       } catch (err) {
-        results.push([err instanceof Error ? err : new Error(String(err)), null]);
+        results.push([
+          err instanceof Error ? err : new Error(String(err)),
+          null,
+        ]);
       }
     }
     return results;
@@ -202,7 +210,9 @@ export class DenoKvStorage {
     const hi = max === '+inf' ? Infinity : Number(max);
     const results: { score: number; member: string }[] = [];
 
-    for await (const entry of this.#kv.list<number>({ prefix: ['zset', key] })) {
+    for await (
+      const entry of this.#kv.list<number>({ prefix: ['zset', key] })
+    ) {
       const score = entry.value;
       if (score >= lo && score <= hi) {
         results.push({ score, member: entry.key[2] as string });
@@ -239,7 +249,11 @@ export class DenoKvStorage {
   // ─── Eval — implements only the QueueStore claim Lua pattern ───────────────
 
   // deno-lint-ignore no-explicit-any
-  async eval(_script: string, _numkeys: number, ...args: any[]): Promise<unknown> {
+  async eval(
+    _script: string,
+    _numkeys: number,
+    ...args: any[]
+  ): Promise<unknown> {
     // Matches CLAIM_SCRIPT args: qKey, pKey, now, count, claimedAt
     const qKey = String(args[0]);
     const pKey = String(args[1]);
@@ -248,7 +262,9 @@ export class DenoKvStorage {
     const claimedAt = Number(args[4]);
 
     const ready: { score: number; member: string }[] = [];
-    for await (const entry of this.#kv.list<number>({ prefix: ['zset', qKey] })) {
+    for await (
+      const entry of this.#kv.list<number>({ prefix: ['zset', qKey] })
+    ) {
       if (entry.value <= now) {
         ready.push({ score: entry.value, member: entry.key[2] as string });
       }
