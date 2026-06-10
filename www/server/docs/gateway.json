@@ -13,15 +13,47 @@
         },
         {
           "type": "table",
-          "headers": ["Method", "Path", "Description"],
+          "headers": [
+            "Method",
+            "Path",
+            "Description"
+          ],
           "rows": [
-            ["GET", "/", "Endpoint index — lists every route the gateway serves"],
-            ["GET", "/health", "Liveness check — returns { status: 'ok' }"],
-            ["GET", "/metrics", "Prometheus text: queue lengths, processing counts, job counters"],
-            ["GET", "/events", "SSE stream of job-finished events (query: queue)"],
-            ["POST", "/emit", "Emit a single job — body: { event, data?, options? }"],
-            ["POST", "/emit/batch", "Emit multiple jobs — body: [{ event, data?, options? }]"],
-            ["POST", "/emit/wait", "Emit and hold the connection until the job finishes"]
+            [
+              "GET",
+              "/",
+              "Endpoint index — lists every route the gateway serves"
+            ],
+            [
+              "GET",
+              "/health",
+              "Liveness check — returns { status: 'ok' }"
+            ],
+            [
+              "GET",
+              "/metrics",
+              "Prometheus text: queue lengths, processing counts, job counters"
+            ],
+            [
+              "GET",
+              "/events",
+              "SSE stream of job-finished events (query: queue)"
+            ],
+            [
+              "POST",
+              "/emit",
+              "Emit a single job — body: { event, data?, options? }"
+            ],
+            [
+              "POST",
+              "/emit/batch",
+              "Emit multiple jobs — body: [{ event, data?, options? }]"
+            ],
+            [
+              "POST",
+              "/emit/wait",
+              "Emit and hold the connection until the job finishes"
+            ]
           ]
         }
       ]
@@ -60,11 +92,27 @@
         },
         {
           "type": "table",
-          "headers": ["Outcome", "Status", "Body"],
+          "headers": [
+            "Outcome",
+            "Status",
+            "Body"
+          ],
           "rows": [
-            ["Job completed", "200", "{ jobId, status: 'completed' }"],
-            ["Job failed", "200", "{ jobId, status: 'failed', error }"],
-            ["Wait timed out", "408", "{ jobId, error }"]
+            [
+              "Job completed",
+              "200",
+              "{ jobId, status: 'completed' }"
+            ],
+            [
+              "Job failed",
+              "200",
+              "{ jobId, status: 'failed', error }"
+            ],
+            [
+              "Wait timed out",
+              "408",
+              "{ jobId, error }"
+            ]
           ]
         },
         {
@@ -130,20 +178,77 @@
         },
         {
           "type": "table",
-          "headers": ["Method", "Path", "Description"],
+          "headers": [
+            "Method",
+            "Path",
+            "Description"
+          ],
           "rows": [
-            ["GET", "/management/jobs", "List jobs (query: queue, status, limit, offset)"],
-            ["GET", "/management/jobs/:queue/:jobId", "Get a single job — 404 if missing"],
-            ["DELETE", "/management/jobs/:queue/:jobId", "Delete a job"],
-            ["POST", "/management/jobs/:queue/:jobId/pause", "Pause a job"],
-            ["POST", "/management/jobs/:queue/:jobId/resume", "Resume a job"],
-            ["POST", "/management/jobs/:queue/:jobId/promote", "Promote a delayed job"],
-            ["POST", "/management/jobs/:queue/:jobId/retry", "Retry a failed job"],
-            ["GET", "/management/queues", "List all queues"],
-            ["GET", "/management/queues/:queue/stats", "Get queue stats"],
-            ["POST", "/management/queues/:queue/pause", "Pause a queue"],
-            ["POST", "/management/queues/:queue/resume", "Resume a queue"],
-            ["POST", "/management/queues/:queue/reset", "Reset (flush) a queue"]
+            [
+              "GET",
+              "/management/jobs",
+              "List jobs (query: queue, status, limit, offset)"
+            ],
+            [
+              "GET",
+              "/management/jobs/:queue/:jobId",
+              "Get a single job — 404 if missing"
+            ],
+            [
+              "DELETE",
+              "/management/jobs/:queue/:jobId",
+              "Delete a job"
+            ],
+            [
+              "POST",
+              "/management/jobs/:queue/:jobId/pause",
+              "Pause a job"
+            ],
+            [
+              "POST",
+              "/management/jobs/:queue/:jobId/resume",
+              "Resume a job"
+            ],
+            [
+              "POST",
+              "/management/jobs/:queue/:jobId/promote",
+              "Promote a delayed job"
+            ],
+            [
+              "POST",
+              "/management/jobs/:queue/:jobId/retry",
+              "Retry a failed job"
+            ],
+            [
+              "GET",
+              "/management/queues",
+              "List all queues"
+            ],
+            [
+              "GET",
+              "/management/queues/:queue/stats",
+              "Get queue stats"
+            ],
+            [
+              "POST",
+              "/management/queues/:queue/pause",
+              "Pause a queue"
+            ],
+            [
+              "POST",
+              "/management/queues/:queue/resume",
+              "Resume a queue"
+            ],
+            [
+              "POST",
+              "/management/queues/:queue/reset",
+              "Reset (flush) a queue"
+            ],
+            [
+              "POST",
+              "/management/reindex",
+              "Rebuild job indexes (pre-index data migration)"
+            ]
           ]
         },
         {

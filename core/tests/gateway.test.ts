@@ -6,6 +6,7 @@ import { assert, assertEquals } from 'jsr:@std/assert@1';
 import { createGateway } from '../libs/gateways/gateway.ts';
 import { HoundManagement } from '../libs/hound-management/mod.ts';
 import { makeDb } from './helpers.ts';
+import { indexKey, QUEUE_REGISTRY_KEY } from '../libs/consumer/job-index.ts';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -276,6 +277,9 @@ async function seedJob(
     ? `queues:${queue}:${jobId}:${status}:exec1`
     : `queues:${queue}:${jobId}:${status}`;
   await db.set(key, JSON.stringify(payload));
+  // Mirror the engine's index upkeep — management reads are index-backed.
+  await db.zadd(indexKey(queue, status), payload.timestamp as number, key);
+  await db.zadd(QUEUE_REGISTRY_KEY, Date.now(), queue);
 }
 
 const H = { 'Content-Type': 'application/json' };
@@ -778,4 +782,37 @@ Deno.test('GET /metrics returns 501 when hound has no metrics()', () =>
     const res = await fetch(`${base}/metrics`);
     assertEquals(res.status, 501);
     await res.body?.cancel();
+  }));
+
+// ─── POST /management/reindex ─────────────────────────────────────────────────
+
+Deno.test('POST /management/reindex rebuilds indexes for pre-index data', () =>
+  withMgmtGateway(async (base, db) => {
+    // Pre-index deployment: state key exists but no index entries
+    await db.set(
+      'queues:legacy:job-1:waiting',
+      JSON.stringify({
+        id: 'job-1',
+        state: { name: 'test.event', queue: 'legacy', data: {}, options: {} },
+        status: 'waiting',
+        timestamp: Date.now(),
+        logs: [],
+        errors: [],
+      }),
+    );
+
+    const before = await fetch(`${base}/management/jobs?queue=legacy`)
+      .then((r) => r.json()) as unknown[];
+    assertEquals(before.length, 0); // invisible before reindex
+
+    const res = await fetch(`${base}/management/reindex`, {
+      method: 'POST',
+      headers: H,
+    });
+    assertEquals(res.status, 200);
+    assertEquals(await res.json(), { indexed: 1 });
+
+    const after = await fetch(`${base}/management/jobs?queue=legacy`)
+      .then((r) => r.json()) as unknown[];
+    assertEquals(after.length, 1);
   }));

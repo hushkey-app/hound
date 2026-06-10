@@ -8,6 +8,12 @@ import { Processor, shouldRetryJob } from '../processor/processor.ts';
 import { DebounceManager } from '../processor/debounce-manager.ts';
 import { QueueStore } from '../consumer/queue-store.ts';
 import { Reaper } from '../consumer/reaper.ts';
+import {
+  indexKey,
+  indexKeyForState,
+  parseStateKey,
+  QUEUE_REGISTRY_KEY,
+} from '../consumer/job-index.ts';
 import { JOB_FINISHED_CHANNEL } from '../broker/mod.ts';
 import { createGateway } from '../gateways/gateway.ts';
 import type { HoundManagement } from '../hound-management/mod.ts';
@@ -543,6 +549,7 @@ export class Hound<
         } else {
           tx.set(stateKey, dataJson);
         }
+        this.#indexWrite(tx, stateKey);
       }
       for (const [jobId, queue, , , score] of payloads) {
         tx.zadd(`queues:${queue}:q`, score, jobId);
@@ -776,11 +783,14 @@ ${'─'.repeat(40)}
 
   async #setJobState(key: string, value: string): Promise<void> {
     const ttl = this.processorOptions?.jobStateTtlSeconds;
+    const pipe = this.db.pipeline();
     if (typeof ttl === 'number' && ttl > 0) {
-      await this.db.set(key, value, 'EX', ttl);
+      pipe.set(key, value, 'EX', ttl);
     } else {
-      await this.db.set(key, value);
+      pipe.set(key, value);
     }
+    this.#indexWrite(pipe, key);
+    await pipe.exec();
   }
 
   /** Pipeline DEL old key + SET new key in one round trip. */
@@ -797,7 +807,43 @@ ${'─'.repeat(40)}
     } else {
       pipe.set(setKey, value);
     }
+    const delIdx = indexKeyForState(delKey);
+    if (delIdx) pipe.zrem(delIdx, delKey);
+    this.#indexWrite(pipe, setKey);
     await pipe.exec();
+  }
+
+  /** Delete a state key and its index entry in one round trip. */
+  async #deleteJobState(key: string): Promise<void> {
+    const pipe = this.db.pipeline();
+    pipe.del(key);
+    const idx = indexKeyForState(key);
+    if (idx) pipe.zrem(idx, key);
+    await pipe.exec();
+  }
+
+  // Queues this process already wrote to the registry — registering once is
+  // enough, so the hot path skips the extra ZADD afterwards.
+  readonly #registeredQueues = new Set<string>();
+
+  /**
+   * Stage index upkeep for a state-key write onto an existing pipeline /
+   * transaction: ZADD the per-queue-status index (score = now) and register
+   * the queue (first write only). Costs extra pipelined ops, not extra
+   * round trips.
+   */
+  #indexWrite(
+    pipe: { zadd(key: string, score: number, member: string): unknown },
+    stateKey: string,
+  ): void {
+    const parsed = parseStateKey(stateKey);
+    if (!parsed) return;
+    const now = Date.now();
+    pipe.zadd(indexKey(parsed.queue, parsed.status), now, stateKey);
+    if (!this.#registeredQueues.has(parsed.queue)) {
+      this.#registeredQueues.add(parsed.queue);
+      pipe.zadd(QUEUE_REGISTRY_KEY, now, parsed.queue);
+    }
   }
 
   #trimLogs(jobEntry: { logs?: unknown[] }): void {
@@ -946,6 +992,17 @@ ${'─'.repeat(40)}
     // via benchmark()) so its interval doesn't leak and double-sweep.
     this.reaper?.stop();
     const allQueues = Array.from(this.queues);
+
+    // Register handled queues so management discovers them without scanning,
+    // even before any job has been emitted.
+    if (allQueues.length) {
+      const regPipe = this.db.pipeline();
+      for (const q of allQueues) {
+        regPipe.zadd(QUEUE_REGISTRY_KEY, Date.now(), q);
+      }
+      await regPipe.exec();
+    }
+
     this.reaper = new Reaper({
       db: this.db,
       queues: allQueues,
@@ -1324,7 +1381,7 @@ ${'─'.repeat(40)}
         const intervalMs = nextRun - Date.now();
         const stalenessMs = Date.now() - (jobEntry.delayUntil ?? Date.now());
         if (stalenessMs > intervalMs) {
-          await this.db.del(processingKey);
+          await this.#deleteJobState(processingKey);
           await this.#scheduleCronNextTick(jobEntry, queueName);
           await _ctx.ack();
           debug(

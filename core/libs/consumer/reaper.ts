@@ -14,6 +14,7 @@
  * @module
  */
 import { QueueStore } from './queue-store.ts';
+import { ALL_STATUSES, indexKey, indexKeyForState } from './job-index.ts';
 import { JOB_FINISHED_CHANNEL } from '../broker/mod.ts';
 import type { HoundBroker, RedisConnection } from '../../types/index.ts';
 import { genExecId } from '../../utils/index.ts';
@@ -76,6 +77,8 @@ export class Reaper {
   async #sweep(): Promise<void> {
     for (const queue of this.#queues) {
       try {
+        await this.#trimIndexes(queue);
+
         const stalled = await this.#store.stalledJobs(
           queue,
           this.#visibilityTimeoutMs,
@@ -145,7 +148,11 @@ export class Reaper {
         `queues:${queue}:${jobId}:failed:${genExecId()}`,
         JSON.stringify(failedData),
       );
-      await this.#db.del(stateKey);
+      const delPipe = this.#db.pipeline();
+      delPipe.del(stateKey);
+      const delIdx = indexKeyForState(stateKey);
+      if (delIdx) delPipe.zrem(delIdx, stateKey);
+      await delPipe.exec();
       await this.#store.ack(queue, jobId);
       this.#broker?.publish(JOB_FINISHED_CHANNEL, {
         jobId,
@@ -164,10 +171,28 @@ export class Reaper {
 
   async #setKey(key: string, value: string): Promise<void> {
     const ttl = this.#jobStateTtlSeconds;
+    const pipe = this.#db.pipeline();
     if (typeof ttl === 'number' && ttl > 0) {
-      await this.#db.set(key, value, 'EX', ttl);
+      pipe.set(key, value, 'EX', ttl);
     } else {
-      await this.#db.set(key, value);
+      pipe.set(key, value);
+    }
+    const idx = indexKeyForState(key);
+    if (idx) pipe.zadd(idx, Date.now(), key);
+    await pipe.exec();
+  }
+
+  /**
+   * Index members don't expire with their state keys (zset members have no
+   * TTL) — trim entries older than jobStateTtlSeconds so counts and listings
+   * don't drift on TTL'd deployments. No-op when no TTL is configured.
+   */
+  async #trimIndexes(queue: string): Promise<void> {
+    const ttl = this.#jobStateTtlSeconds;
+    if (typeof ttl !== 'number' || ttl <= 0) return;
+    const cutoff = Date.now() - ttl * 1000;
+    for (const status of ALL_STATUSES) {
+      await this.#db.zremrangebyscore(indexKey(queue, status), 0, cutoff);
     }
   }
 }

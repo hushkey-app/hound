@@ -21,7 +21,10 @@ const management = new HoundManagement({ db, hound });
 const jobs = await management.api.jobs.find();
 
 // Filter by queue and/or status
-const failed = await management.api.jobs.find({ queue: 'payments', status: 'failed' });
+const failed = await management.api.jobs.find({
+  queue: 'payments',
+  status: 'failed',
+});
 
 // Get single job by {queue}:{jobId}
 const job = await management.api.jobs.get('default:job-id-123');

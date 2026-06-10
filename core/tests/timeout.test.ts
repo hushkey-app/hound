@@ -7,7 +7,9 @@ import { withHound } from './helpers.ts';
 Deno.test('job completes normally when handler finishes before timeout', () =>
   withHound(async (h) => {
     let ran = false;
-    h.on('timeout.fast', async () => { ran = true; }, { timeoutMs: 500 });
+    h.on('timeout.fast', async () => {
+      ran = true;
+    }, { timeoutMs: 500 });
     await h.start();
     await h.emitAndWait('timeout.fast', {}, { timeoutMs: 3000 });
     assertEquals(ran, true);
@@ -18,7 +20,9 @@ Deno.test('job fails when handler exceeds timeoutMs', () =>
     // Use a manually-resolved Promise instead of setTimeout so there's no
     // abandoned timer after Promise.race rejects — resolve it after assertRejects.
     let unblock!: () => void;
-    const block = new Promise<void>((r) => { unblock = r; });
+    const block = new Promise<void>((r) => {
+      unblock = r;
+    });
 
     h.on('timeout.slow', () => block, { timeoutMs: 50 });
 
@@ -33,7 +37,9 @@ Deno.test('job fails when handler exceeds timeoutMs', () =>
 Deno.test('timeout error message includes job name and duration', () =>
   withHound(async (h) => {
     let unblock!: () => void;
-    const block = new Promise<void>((r) => { unblock = r; });
+    const block = new Promise<void>((r) => {
+      unblock = r;
+    });
 
     h.on('timeout.msg', () => block, { timeoutMs: 50 });
 
@@ -44,7 +50,10 @@ Deno.test('timeout error message includes job name and duration', () =>
     } catch (e: any) {
       message = e.message;
     }
-    assert(message.includes('timeout.msg'), `expected job name in error: ${message}`);
+    assert(
+      message.includes('timeout.msg'),
+      `expected job name in error: ${message}`,
+    );
     assert(message.includes('50ms'), `expected duration in error: ${message}`);
     unblock();
   }));
@@ -52,7 +61,9 @@ Deno.test('timeout error message includes job name and duration', () =>
 Deno.test('timeout applies to the full middleware + handler chain', () =>
   withHound(async (h) => {
     let unblock!: () => void;
-    const block = new Promise<void>((r) => { unblock = r; });
+    const block = new Promise<void>((r) => {
+      unblock = r;
+    });
 
     h.use(async (_ctx, next) => {
       await block;

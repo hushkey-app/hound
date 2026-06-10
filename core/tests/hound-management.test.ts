@@ -6,6 +6,7 @@ import { assert, assertEquals, assertRejects } from 'jsr:@std/assert@1';
 import { HoundManagement } from '../libs/hound-management/mod.ts';
 import { InMemoryStorage } from '../libs/storage/in-memory.ts';
 import { makeDb, sleep, withHound } from './helpers.ts';
+import { indexKey, QUEUE_REGISTRY_KEY } from '../libs/consumer/job-index.ts';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -43,6 +44,9 @@ async function seedJob(
     : `queues:${queue}:${jobId}:${status}`;
 
   await db.set(key, JSON.stringify(payload));
+  // Mirror the engine's index upkeep — management reads are index-backed.
+  await db.zadd(indexKey(queue, status), payload.timestamp as number, key);
+  await db.zadd(QUEUE_REGISTRY_KEY, Date.now(), queue);
 }
 
 function makeManagement(db: InMemoryStorage): HoundManagement {
@@ -106,10 +110,21 @@ Deno.test('jobs.find: deduplicates terminal jobs — latest timestamp wins', asy
     'queues:default:job-dup:completed:exec1',
     JSON.stringify({ ...base, timestamp: now - 1000 }),
   );
+  await db.zadd(
+    indexKey('default', 'completed'),
+    now - 1000,
+    'queues:default:job-dup:completed:exec1',
+  );
   await db.set(
     'queues:default:job-dup:completed:exec2',
     JSON.stringify({ ...base, timestamp: now }),
   );
+  await db.zadd(
+    indexKey('default', 'completed'),
+    now,
+    'queues:default:job-dup:completed:exec2',
+  );
+  await db.zadd(QUEUE_REGISTRY_KEY, now, 'default');
 
   const m = makeManagement(db);
   const jobs = await m.api.jobs.find();
@@ -482,9 +497,9 @@ Deno.test('queues.find: discovers queues from job state keys', async () => {
   assertEquals(names, ['q-a', 'q-b']);
 });
 
-Deno.test('queues.find: discovers queues from sorted-set queue keys', async () => {
+Deno.test('queues.find: discovers queues from the registry', async () => {
   const db = makeDb();
-  await db.zadd('queues:payments:q', Date.now(), 'job-1');
+  await db.zadd(QUEUE_REGISTRY_KEY, Date.now(), 'payments');
   const m = makeManagement(db);
   const queues = await m.api.queues.find();
   assert(queues.some((q) => q.name === 'payments'));
@@ -615,6 +630,16 @@ Deno.test('queues.stats: deduplicates terminal jobs by jobId', async () => {
   // Same jobId, two executions
   await db.set('queues:default:job-x:completed:exec1', JSON.stringify(base));
   await db.set('queues:default:job-x:completed:exec2', JSON.stringify(base));
+  await db.zadd(
+    indexKey('default', 'completed'),
+    Date.now(),
+    'queues:default:job-x:completed:exec1',
+  );
+  await db.zadd(
+    indexKey('default', 'completed'),
+    Date.now(),
+    'queues:default:job-x:completed:exec2',
+  );
   // Different jobId
   await seedJob(db, 'default', 'job-y', 'completed');
 
@@ -757,6 +782,11 @@ Deno.test('jobs.get: newest terminal execution wins (direct lookup, no full scan
       paused: false,
       timestamp: now,
     }),
+  );
+  await db.zadd(
+    indexKey('default', 'completed'),
+    now,
+    'queues:default:job-g:completed:exec2',
   );
   const m = makeManagement(db);
   const job = await m.api.jobs.get('default:job-g');

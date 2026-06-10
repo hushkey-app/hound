@@ -106,7 +106,15 @@ Deno.test('InMemoryStorage: eval claim moves ready jobs to processing set', asyn
   await db.zadd('queues:q:q', now - 1000, 'job-b');
   await db.zadd('queues:q:q', now + 99999, 'future');
 
-  const claimed = await db.eval('', 2, 'queues:q:q', 'queues:q:processing', now, 10, now) as string[];
+  const claimed = await db.eval(
+    '',
+    2,
+    'queues:q:q',
+    'queues:q:processing',
+    now,
+    10,
+    now,
+  ) as string[];
   assertEquals(new Set(claimed), new Set(['job-a', 'job-b']));
   assertEquals(await db.zcard('queues:q:q'), 1); // future remains
   assertEquals(await db.zcard('queues:q:processing'), 2);
@@ -117,7 +125,15 @@ Deno.test('InMemoryStorage: eval claim respects count limit', async () => {
   const now = Date.now();
   for (let i = 0; i < 5; i++) await db.zadd('queues:q:q', now - i, `job${i}`);
 
-  const claimed = await db.eval('', 2, 'queues:q:q', 'queues:q:processing', now, 3, now) as string[];
+  const claimed = await db.eval(
+    '',
+    2,
+    'queues:q:q',
+    'queues:q:processing',
+    now,
+    3,
+    now,
+  ) as string[];
   assertEquals(claimed.length, 3);
   assertEquals(await db.zcard('queues:q:q'), 2);
 });
@@ -127,7 +143,15 @@ Deno.test('InMemoryStorage: eval claim returns empty when no ready jobs', async 
   const now = Date.now();
   await db.zadd('queues:q:q', now + 99999, 'future');
 
-  const claimed = await db.eval('', 2, 'queues:q:q', 'queues:q:processing', now, 10, now) as string[];
+  const claimed = await db.eval(
+    '',
+    2,
+    'queues:q:q',
+    'queues:q:processing',
+    now,
+    10,
+    now,
+  ) as string[];
   assertEquals(claimed, []);
   assertEquals(await db.zcard('queues:q:processing'), 0);
 });

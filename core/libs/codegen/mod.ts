@@ -304,7 +304,12 @@ class ManagementQueuesClient {
 export class HoundClient {
   #url: string;
   #headers: Record<string, string>;
-  readonly management: { readonly jobs: ManagementJobsClient; readonly queues: ManagementQueuesClient };
+  readonly management: {
+    readonly jobs: ManagementJobsClient;
+    readonly queues: ManagementQueuesClient;
+    /** Rebuild job indexes from existing state keys (pre-index data migration). */
+    readonly reindex: () => Promise<number>;
+  };
 
   constructor(url: string, options?: { auth?: string; headers?: Record<string, string> }) {
     this.#url = url.replace(/\\/$/, '');
@@ -313,6 +318,12 @@ export class HoundClient {
     this.management = {
       jobs: new ManagementJobsClient(this.#url, this.#headers),
       queues: new ManagementQueuesClient(this.#url, this.#headers),
+      reindex: async () => {
+        const res = await fetch(\`\${this.#url}/management/reindex\`, { method: 'POST', headers: this.#headers });
+        if (!res.ok) throw await _mgmtError('management.reindex', res);
+        const { indexed } = await res.json() as { indexed: number };
+        return indexed;
+      },
     };
   }
 

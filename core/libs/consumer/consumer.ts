@@ -85,7 +85,9 @@ export class Consumer {
           this.#consecutiveErrors = 0;
 
           // Sort claimed messages by priority descending (higher priority number = first)
-          messages.sort((a, b) => (b.data.priority ?? 0) - (a.data.priority ?? 0));
+          messages.sort((a, b) =>
+            (b.data.priority ?? 0) - (a.data.priority ?? 0)
+          );
 
           // Dispatch up to concurrency limit
           for (const message of messages) {
@@ -219,8 +221,13 @@ export class Consumer {
   #delay(ms: number): Promise<void> {
     return new Promise((resolve) => {
       const id = setTimeout(resolve, ms);
-      const abort = () => { clearTimeout(id); resolve(); };
-      this.#processingController.signal.addEventListener('abort', abort, { once: true });
+      const abort = () => {
+        clearTimeout(id);
+        resolve();
+      };
+      this.#processingController.signal.addEventListener('abort', abort, {
+        once: true,
+      });
     });
   }
 }

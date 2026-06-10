@@ -205,6 +205,7 @@ export class DenoKvStorage {
     key: string,
     min: number | string,
     max: number | string,
+    withScores?: 'WITHSCORES',
   ): Promise<string[]> {
     const lo = min === '-inf' ? -Infinity : Number(min);
     const hi = max === '+inf' ? Infinity : Number(max);
@@ -220,6 +221,9 @@ export class DenoKvStorage {
     }
 
     results.sort((a, b) => a.score - b.score || (a.member < b.member ? -1 : 1));
+    if (withScores === 'WITHSCORES') {
+      return results.flatMap((e) => [e.member, String(e.score)]);
+    }
     return results.map((e) => e.member);
   }
 
@@ -229,6 +233,25 @@ export class DenoKvStorage {
       const existing = await this.#kv.get(['zset', key, member]);
       if (existing.value !== null) {
         await this.#kv.delete(['zset', key, member]);
+        n++;
+      }
+    }
+    return n;
+  }
+
+  async zremrangebyscore(
+    key: string,
+    min: number | string,
+    max: number | string,
+  ): Promise<number> {
+    const lo = min === '-inf' ? -Infinity : Number(min);
+    const hi = max === '+inf' ? Infinity : Number(max);
+    let n = 0;
+    for await (
+      const entry of this.#kv.list<number>({ prefix: ['zset', key] })
+    ) {
+      if (entry.value >= lo && entry.value <= hi) {
+        await this.#kv.delete(entry.key);
         n++;
       }
     }

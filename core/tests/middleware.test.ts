@@ -14,7 +14,9 @@ Deno.test('middleware runs before and after the handler', () =>
       order.push('after');
     });
 
-    h.on('mw.order', async () => { order.push('handler'); });
+    h.on('mw.order', async () => {
+      order.push('handler');
+    });
 
     await h.start();
     await h.emitAndWait('mw.order', {}, { timeoutMs: 3000 });
@@ -26,15 +28,31 @@ Deno.test('multiple middleware run in registration order', () =>
   withHound(async (h) => {
     const order: string[] = [];
 
-    h.use(async (_ctx, next) => { order.push('mw1-before'); await next(); order.push('mw1-after'); });
-    h.use(async (_ctx, next) => { order.push('mw2-before'); await next(); order.push('mw2-after'); });
+    h.use(async (_ctx, next) => {
+      order.push('mw1-before');
+      await next();
+      order.push('mw1-after');
+    });
+    h.use(async (_ctx, next) => {
+      order.push('mw2-before');
+      await next();
+      order.push('mw2-after');
+    });
 
-    h.on('mw.multi', async () => { order.push('handler'); });
+    h.on('mw.multi', async () => {
+      order.push('handler');
+    });
 
     await h.start();
     await h.emitAndWait('mw.multi', {}, { timeoutMs: 3000 });
 
-    assertEquals(order, ['mw1-before', 'mw2-before', 'handler', 'mw2-after', 'mw1-after']);
+    assertEquals(order, [
+      'mw1-before',
+      'mw2-before',
+      'handler',
+      'mw2-after',
+      'mw1-after',
+    ]);
   }));
 
 Deno.test('middleware receives correct ctx fields', () =>
@@ -81,7 +99,9 @@ Deno.test('middleware that skips next() prevents handler from running', () =>
       // intentionally does not call next()
     });
 
-    h.on('mw.skip', async () => { handlerRan = true; });
+    h.on('mw.skip', async () => {
+      handlerRan = true;
+    });
 
     await h.start();
     // job completes (middleware resolved without error) but handler never ran
@@ -95,8 +115,14 @@ Deno.test('use() is chainable', () =>
     let count = 0;
 
     h
-      .use(async (_ctx, next) => { count++; await next(); })
-      .use(async (_ctx, next) => { count++; await next(); });
+      .use(async (_ctx, next) => {
+        count++;
+        await next();
+      })
+      .use(async (_ctx, next) => {
+        count++;
+        await next();
+      });
 
     h.on('mw.chain', async () => {});
 

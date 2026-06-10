@@ -28,6 +28,10 @@
           "type": "code",
           "lang": "ts",
           "text": "import { HoundManagement } from 'hound/';\n\nconst management = new HoundManagement({ db: redis });"
+        },
+        {
+          "type": "tip",
+          "text": "Upgrading a deployment with pre-existing job data? Run management.api.reindex() once (or POST /management/reindex) — it rebuilds the indexes from a one-time keyspace scan. Everything written afterwards indexes itself automatically."
         }
       ]
     },
@@ -88,7 +92,7 @@
         },
         {
           "type": "tip",
-          "text": "limit and offset cap the response size, not the scan cost — find() still walks the keyspace. For hot polling paths prefer get() on a known job, which uses direct key lookups."
+          "text": "Reads are index-backed: find() and stats() consult per-queue sorted-set indexes maintained by the engine, and only the requested page’s payloads are fetched — no keyspace scans, regardless of how many jobs exist."
         }
       ]
     },

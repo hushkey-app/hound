@@ -9,6 +9,11 @@
  */
 import { Consumer } from '../consumer/consumer.ts';
 import { QueueStore } from '../consumer/queue-store.ts';
+import {
+  indexKeyForState,
+  parseStateKey,
+  QUEUE_REGISTRY_KEY,
+} from '../consumer/job-index.ts';
 import { isConfigError } from '../../utils/errors.ts';
 import type {
   Message,
@@ -131,13 +136,27 @@ export class Processor {
     await ctx.nack(error);
   }
 
+  // Queues already written to the registry by this process — register once.
+  readonly #registeredQueues = new Set<string>();
+
   async #setKey(key: string, value: string): Promise<void> {
     const ttl = this.jobStateTtlSeconds;
+    const pipe = this.db.pipeline();
     if (typeof ttl === 'number' && ttl > 0) {
-      await this.db.set(key, value, 'EX', ttl);
+      pipe.set(key, value, 'EX', ttl);
     } else {
-      await this.db.set(key, value);
+      pipe.set(key, value);
     }
+    const idx = indexKeyForState(key);
+    if (idx) {
+      const parsed = parseStateKey(key)!;
+      pipe.zadd(idx, Date.now(), key);
+      if (!this.#registeredQueues.has(parsed.queue)) {
+        this.#registeredQueues.add(parsed.queue);
+        pipe.zadd(QUEUE_REGISTRY_KEY, Date.now(), parsed.queue);
+      }
+    }
+    await pipe.exec();
   }
 
   #trimLogs(jobEntry: { logs?: unknown[] }): void {

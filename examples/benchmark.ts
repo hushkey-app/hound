@@ -23,7 +23,7 @@ console.log(`[benchmark] Backend: ${backend}`);
 // Fresh instance — no jobDirs, no crons, no extra handlers
 const hound = Hound.create({
   db,
-  concurrency: 1,
+  concurrency: 10,
   processor: {
     pollIntervalMs: 0,
     claimCount: 200,

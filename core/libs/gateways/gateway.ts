@@ -24,6 +24,7 @@
  *   POST   /management/queues/:queue/pause
  *   POST   /management/queues/:queue/resume
  *   POST   /management/queues/:queue/reset
+ *   POST   /management/reindex              — rebuild job indexes (pre-index data migration)
  *
  * Auth (optional): pass Authorization: Bearer <token> on all requests.
  *
@@ -458,6 +459,10 @@ async function handleManagement(
       if (req.method === 'POST' && action === 'retry') {
         return jobOr404(await m.api.jobs.retry(key));
       }
+    }
+
+    if (segs[0] === 'reindex' && req.method === 'POST') {
+      return json({ indexed: await m.api.reindex() });
     }
 
     if (segs[0] === 'queues') {

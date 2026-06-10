@@ -12,6 +12,16 @@ import type { RedisConnection } from '../../types/index.ts';
 import type { Hound } from '../hound/mod.ts';
 import { SUBSCRIBE_JOB_FINISHED } from '../hound/mod.ts';
 import { QueueStore } from '../consumer/queue-store.ts';
+import {
+  ACTIVE_STATUSES,
+  ALL_STATUSES,
+  indexKey,
+  indexKeyForState,
+  type ParsedStateKey,
+  parseStateKey,
+  QUEUE_REGISTRY_KEY,
+  TERMINAL_STATUSES,
+} from '../consumer/job-index.ts';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -62,8 +72,8 @@ export interface FindJobsOptions {
   /** Narrow to a specific job status. */
   status?: JobRecord['status'];
   /**
-   * Max records to return, applied after sorting and filtering.
-   * Caps response size, not scan cost — find() still walks the keyspace.
+   * Max records to return, applied after sorting and filtering. Reads are
+   * index-backed — only the requested page's payloads are fetched.
    */
   limit?: number;
   /** Records to skip before limit — for offset pagination. */
@@ -84,11 +94,6 @@ export interface HoundManagementOptions {
   hound?: Hound<any>;
 }
 
-// ─── Active job statuses — terminal states use execId suffix ─────────────────
-
-const ACTIVE_STATUSES = ['processing', 'waiting', 'delayed'] as const;
-const TERMINAL_STATUSES = ['completed', 'failed'] as const;
-
 // ─── HoundManagement ───────────────────────────────────────────────────────────
 
 /** Queue and job administration. Use api.jobs and api.queues for CRUD; events.job for completion/failure. */
@@ -99,6 +104,8 @@ export class HoundManagement {
   readonly api: {
     readonly jobs: JobsApi;
     readonly queues: QueuesApi;
+    /** Rebuild indexes + queue registry from a one-time keyspace scan (migration). */
+    readonly reindex: () => Promise<number>;
   };
 
   readonly events: {
@@ -113,9 +120,11 @@ export class HoundManagement {
     this.db = options.db;
     this.hound = options.hound;
 
+    const jobs = new JobsApi(this.db, this.hound);
     this.api = {
-      jobs: new JobsApi(this.db, this.hound),
+      jobs,
       queues: new QueuesApi(this.db, this.hound),
+      reindex: () => jobs.reindex(),
     };
 
     this.events = {
@@ -156,71 +165,109 @@ class JobsApi {
   }
 
   /**
-   * Find jobs across all queues and statuses.
-   * Returns one entry per jobId — most recent terminal state wins for completed/failed.
-   * Pass options to narrow by queue or status.
+   * Find jobs across queues and statuses — index-backed, no keyspace SCAN.
+   * Reads the per-queue-status index zsets (member = state key, score =
+   * transition time), merges to one entry per jobId (newest terminal state
+   * wins over an older active one), sorts newest-first, and only fetches the
+   * requested page's payloads. Index members whose state key has expired are
+   * removed lazily.
    */
   async find(options?: FindJobsOptions): Promise<JobRecord[]> {
-    const jobMap = new Map<string, JobRecord>();
+    const statuses = options?.status ? [options.status] : [...ALL_STATUSES];
+    const queues = options?.queue
+      ? [options.queue]
+      : await this.db.zrangebyscore(QUEUE_REGISTRY_KEY, '-inf', '+inf');
 
-    for (const status of ACTIVE_STATUSES) {
-      const pattern = `queues:*:*:${status}`;
-      const keys = await this.#scanKeys(pattern);
-      if (!keys.length) continue;
-
-      const pipe = this.db.pipeline();
-      keys.forEach((k) => pipe.get(k));
-      const results = await pipe.exec() as [Error | null, string | null][];
-
-      for (let i = 0; i < results.length; i++) {
-        const [err, data] = results[i];
-        if (err || !data) continue;
-        const job = this.#parseJob(data, status, keys[i]);
-        if (!job) continue;
-        jobMap.set(`${job.queue}:${job.id}`, job);
-      }
+    interface Entry {
+      key: string;
+      score: number;
+      parsed: ParsedStateKey;
     }
-
-    for (const status of TERMINAL_STATUSES) {
-      const pattern = `queues:*:*:${status}:*`;
-      const keys = await this.#scanKeys(pattern);
-      if (!keys.length) continue;
-
-      const pipe = this.db.pipeline();
-      keys.forEach((k) => pipe.get(k));
-      const results = await pipe.exec() as [Error | null, string | null][];
-
-      for (let i = 0; i < results.length; i++) {
-        const [err, data] = results[i];
-        if (err || !data) continue;
-        const parts = keys[i].split(':');
-        const execId = parts[parts.length - 1];
-        const job = this.#parseJob(data, status, keys[i], execId);
-        if (!job) continue;
-        const mapKey = `${job.queue}:${job.id}`;
-        const existing = jobMap.get(mapKey);
-        if (!existing || (job.timestamp ?? 0) > (existing.timestamp ?? 0)) {
-          jobMap.set(mapKey, job);
+    const entries: Entry[] = [];
+    for (const queue of queues) {
+      for (const status of statuses) {
+        const flat = await this.db.zrangebyscore(
+          indexKey(queue, status),
+          '-inf',
+          '+inf',
+          'WITHSCORES',
+        );
+        for (let i = 0; i < flat.length; i += 2) {
+          const parsed = parseStateKey(flat[i]);
+          if (!parsed) continue;
+          entries.push({ key: flat[i], score: Number(flat[i + 1]), parsed });
         }
       }
     }
 
-    let results = Array.from(jobMap.values()).sort((a, b) =>
-      (b.timestamp ?? 0) - (a.timestamp ?? 0)
-    );
-    if (options?.queue) {
-      results = results.filter((j) => j.queue === options.queue);
+    // One entry per jobId. Among actives: delayed > waiting > processing;
+    // terminal vs anything: newer score wins — mirrors the original
+    // scan-based merge, with index scores standing in for payload timestamps.
+    const ACTIVE_RANK: Record<string, number> = {
+      processing: 0,
+      waiting: 1,
+      delayed: 2,
+    };
+    const chosen = new Map<string, Entry>();
+    for (const e of entries) {
+      const id = `${e.parsed.queue}:${e.parsed.jobId}`;
+      const cur = chosen.get(id);
+      if (!cur) {
+        chosen.set(id, e);
+        continue;
+      }
+      const bothActive = e.parsed.execId === undefined &&
+        cur.parsed.execId === undefined;
+      if (bothActive) {
+        if (ACTIVE_RANK[e.parsed.status] > ACTIVE_RANK[cur.parsed.status]) {
+          chosen.set(id, e);
+        }
+      } else if (e.score > cur.score) {
+        chosen.set(id, e);
+      }
     }
-    if (options?.status) {
-      results = results.filter((j) => j.status === options.status);
-    }
+
+    // Newest first; paginate BEFORE fetching payloads.
+    let page = [...chosen.values()].sort((a, b) => b.score - a.score);
     if (options?.offset !== undefined && options.offset > 0) {
-      results = results.slice(options.offset);
+      page = page.slice(options.offset);
     }
     if (options?.limit !== undefined && options.limit >= 0) {
-      results = results.slice(0, options.limit);
+      page = page.slice(0, options.limit);
     }
-    return results;
+    if (!page.length) return [];
+
+    const pipe = this.db.pipeline();
+    page.forEach((e) => pipe.get(e.key));
+    const results = await pipe.exec() as [Error | null, string | null][];
+
+    const jobs: JobRecord[] = [];
+    const stale: Entry[] = [];
+    for (let i = 0; i < page.length; i++) {
+      const [err, data] = results[i];
+      if (err || !data) {
+        stale.push(page[i]);
+        continue;
+      }
+      const job = this.#parseJob(
+        data,
+        page[i].parsed.status,
+        page[i].key,
+        page[i].parsed.execId,
+      );
+      if (job) jobs.push(job);
+    }
+
+    // Lazy repair — drop members whose state key expired or was deleted.
+    if (stale.length) {
+      const clean = this.db.pipeline();
+      for (const e of stale) {
+        clean.zrem(indexKey(e.parsed.queue, e.parsed.status), e.key);
+      }
+      await clean.exec();
+    }
+
+    return jobs;
   }
 
   /**
@@ -252,7 +299,7 @@ class JobsApi {
     }
 
     for (const status of TERMINAL_STATUSES) {
-      const keys = await this.#scanKeys(`queues:${queue}:${jobId}:${status}:*`);
+      const keys = await this.#terminalKeysFor(queue, jobId, status);
       if (!keys.length) continue;
 
       const tPipe = this.db.pipeline();
@@ -279,6 +326,70 @@ class JobsApi {
     return job;
   }
 
+  /**
+   * Rebuild the queue registry and all index zsets from a one-time keyspace
+   * scan. Run once when upgrading a deployment that has pre-index job data —
+   * everything written after the upgrade indexes itself. Returns the number
+   * of state keys indexed.
+   */
+  async reindex(): Promise<number> {
+    // Wipe existing indexes first so stale members don't linger.
+    const oldIdx = await this.#scanKeys('hound:idx:*');
+    if (oldIdx.length) await this.db.del(...oldIdx);
+    await this.db.del(QUEUE_REGISTRY_KEY);
+
+    const patterns = [
+      ...ACTIVE_STATUSES.map((s) => `queues:*:*:${s}`),
+      ...TERMINAL_STATUSES.map((s) => `queues:*:*:${s}:*`),
+    ];
+
+    let count = 0;
+    for (const pattern of patterns) {
+      const keys = await this.#scanKeys(pattern);
+      if (!keys.length) continue;
+
+      const getPipe = this.db.pipeline();
+      keys.forEach((k) => getPipe.get(k));
+      const results = await getPipe.exec() as [Error | null, string | null][];
+
+      const idxPipe = this.db.pipeline();
+      let staged = 0;
+      for (let i = 0; i < keys.length; i++) {
+        const [err, data] = results[i];
+        if (err || !data) continue; // expired, or non-string key caught by the pattern
+        const parsed = parseStateKey(keys[i]);
+        if (!parsed) continue;
+        let ts = Date.now();
+        try {
+          ts = (JSON.parse(data) as { timestamp?: number }).timestamp ?? ts;
+        } catch {
+          continue; // not a job payload
+        }
+        idxPipe.zadd(indexKey(parsed.queue, parsed.status), ts, keys[i]);
+        idxPipe.zadd(QUEUE_REGISTRY_KEY, ts, parsed.queue);
+        staged++;
+      }
+      if (staged) await idxPipe.exec();
+      count += staged;
+    }
+    return count;
+  }
+
+  /** Terminal state keys for a job — index member prefix filter, no SCAN. */
+  async #terminalKeysFor(
+    queue: string,
+    jobId: string,
+    status: string,
+  ): Promise<string[]> {
+    const prefix = `queues:${queue}:${jobId}:${status}:`;
+    const members = await this.db.zrangebyscore(
+      indexKey(queue, status),
+      '-inf',
+      '+inf',
+    );
+    return members.filter((m) => m.startsWith(prefix));
+  }
+
   async delete(key: string): Promise<boolean> {
     const [queue, ...rest] = key.split(':');
     const jobId = rest.join(':');
@@ -297,16 +408,19 @@ class JobsApi {
 
     const terminalKeys: string[] = [];
     for (const status of TERMINAL_STATUSES) {
-      const found = await this.#scanKeys(
-        `queues:${queue}:${jobId}:${status}:*`,
-      );
-      terminalKeys.push(...found);
+      terminalKeys.push(...await this.#terminalKeysFor(queue, jobId, status));
     }
 
     const allKeys = [...activeKeys, ...terminalKeys];
     if (!allKeys.length) return false;
 
-    await this.db.del(...allKeys);
+    const pipe2 = this.db.pipeline();
+    pipe2.del(...allKeys);
+    for (const k of allKeys) {
+      const idx = indexKeyForState(k);
+      if (idx) pipe2.zrem(idx, k);
+    }
+    await pipe2.exec();
     return true;
   }
 
@@ -499,48 +613,16 @@ class QueuesApi {
     this.queueStore = new QueueStore(db);
   }
 
-  /** Find all queues — discovers by scanning state keys. */
+  /** Find all queues — reads the queue registry, no keyspace scan. */
   async find(): Promise<QueueRecord[]> {
-    const queueNames = new Set<string>();
-
-    let cursor = '0';
-    do {
-      const [next, keys] = await this.db.scan(
-        cursor,
-        'MATCH',
-        'queues:*:*:*',
-        'COUNT',
-        100,
-      ) as [string, string[]];
-      cursor = next;
-      for (const key of keys) {
-        const parts = key.split(':');
-        if (parts.length >= 4 && parts[0] === 'queues') {
-          queueNames.add(parts[1]);
-        }
-      }
-    } while (cursor !== '0');
-
-    // Also discover from sorted-set queue keys
-    let qCursor = '0';
-    do {
-      const [next, keys] = await this.db.scan(
-        qCursor,
-        'MATCH',
-        'queues:*:q',
-        'COUNT',
-        100,
-      ) as [string, string[]];
-      qCursor = next;
-      for (const key of keys) {
-        // queues:{queue}:q
-        const parts = key.split(':');
-        if (parts.length === 3) queueNames.add(parts[1]);
-      }
-    } while (qCursor !== '0');
+    const names = await this.db.zrangebyscore(
+      QUEUE_REGISTRY_KEY,
+      '-inf',
+      '+inf',
+    );
 
     const records = await Promise.all(
-      Array.from(queueNames).sort().map(async (name) => {
+      Array.from(new Set(names)).sort().map(async (name) => {
         const [paused, length] = await Promise.all([
           this.running(name).then((r) => !r),
           this.queueStore.queueLength(name),
@@ -571,6 +653,8 @@ class QueuesApi {
         await this.db.del(...stateKeys.slice(i, i + 1000));
       }
     }
+    // Indexes live outside the queues:* namespace — clear them explicitly.
+    await this.db.del(...ALL_STATUSES.map((s) => indexKey(key, s)));
     await this.queueStore.deleteQueue(key);
   }
 
@@ -589,14 +673,25 @@ class QueuesApi {
       failed: 0,
     };
 
+    // Active indexes hold one member per job — ZCARD is the count.
     for (const status of ACTIVE_STATUSES) {
-      const keys = await this.#scanStateKeys(`queues:${key}:*:${status}`);
-      counts[status] = keys.length;
+      counts[status] = await this.db.zcard(indexKey(key, status));
     }
 
+    // Terminal indexes hold one member per execution — dedupe by jobId to
+    // preserve the original "unique jobs" semantic. Member list only, no GETs.
     for (const status of TERMINAL_STATUSES) {
-      const keys = await this.#scanStateKeys(`queues:${key}:*:${status}:*`);
-      counts[status] = new Set(keys.map((k) => k.split(':')[2])).size;
+      const members = await this.db.zrangebyscore(
+        indexKey(key, status),
+        '-inf',
+        '+inf',
+      );
+      const jobIds = new Set<string>();
+      for (const m of members) {
+        const parsed = parseStateKey(m);
+        if (parsed) jobIds.add(parsed.jobId);
+      }
+      counts[status] = jobIds.size;
     }
 
     return {

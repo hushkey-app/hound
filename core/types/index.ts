@@ -16,12 +16,19 @@ export interface StorageClient {
   set(key: string, value: string, ...args: any[]): Promise<any>;
   del(...keys: string[]): Promise<number>;
   zadd(key: string, score: number, member: string): Promise<number | string>;
+  /** With 'WITHSCORES', returns a flat [member, score, member, score, …] array (ioredis convention). */
   zrangebyscore(
     key: string,
     min: number | string,
     max: number | string,
+    withScores?: 'WITHSCORES',
   ): Promise<string[]>;
   zrem(key: string, ...members: string[]): Promise<number>;
+  zremrangebyscore(
+    key: string,
+    min: number | string,
+    max: number | string,
+  ): Promise<number>;
   zcard(key: string): Promise<number>;
   zscore(key: string, member: string): Promise<string | null>;
   // deno-lint-ignore no-explicit-any
