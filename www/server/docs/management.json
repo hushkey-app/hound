@@ -35,17 +35,29 @@
       "id": "jobs-api",
       "heading": "Jobs API",
       "blocks": [
-        { "type": "p", "text": "Access job management through management.api.jobs:" },
+        {
+          "type": "p",
+          "text": "Access job management through management.api.jobs:"
+        },
         {
           "type": "table",
-          "headers": ["Method", "Description"],
+          "headers": [
+            "Method",
+            "Description"
+          ],
           "rows": [
             [
               "find(options?)",
-              "List all jobs, optionally filtered by queue or status"
+              "List jobs, filtered by queue or status; paginate with limit and offset"
             ],
-            ["get('queue:jobId')", "Fetch a single job record"],
-            ["delete('queue:jobId')", "Remove a job and all its state keys"],
+            [
+              "get('queue:jobId')",
+              "Fetch a single job record"
+            ],
+            [
+              "delete('queue:jobId')",
+              "Remove a job and all its state keys"
+            ],
             [
               "promote('queue:jobId')",
               "Fire a delayed or waiting job immediately"
@@ -54,14 +66,29 @@
               "pause('queue:jobId')",
               "Freeze a job by pushing its delay to max"
             ],
-            ["resume('queue:jobId')", "Unfreeze a paused job"],
-            ["retry('queue:jobId')", "Re-enqueue a failed job"]
+            [
+              "resume('queue:jobId')",
+              "Unfreeze a paused job"
+            ],
+            [
+              "retry('queue:jobId')",
+              "Re-enqueue a failed job"
+            ]
           ]
         },
         {
           "type": "code",
           "lang": "ts",
           "text": "// Find all failed jobs in the emails queue\nconst failed = await management.api.jobs.find({ queue: 'emails', status: 'failed' });\n\n// Retry each one\nfor (const job of failed) {\n  await management.api.jobs.retry(`${job.queue}:${job.id}`);\n}"
+        },
+        {
+          "type": "code",
+          "lang": "ts",
+          "text": "// Page 3 of failed jobs, 20 per page (sorted newest first)\nawait management.api.jobs.find({ status: 'failed', limit: 20, offset: 40 });"
+        },
+        {
+          "type": "tip",
+          "text": "limit and offset cap the response size, not the scan cost — find() still walks the keyspace. For hot polling paths prefer get() on a known job, which uses direct key lookups."
         }
       ]
     },
@@ -75,9 +102,15 @@
         },
         {
           "type": "table",
-          "headers": ["Method", "Description"],
+          "headers": [
+            "Method",
+            "Description"
+          ],
           "rows": [
-            ["find()", "List all queues with name, paused flag, and length"],
+            [
+              "find()",
+              "List all queues with name, paused flag, and length"
+            ],
             [
               "stats('queueName')",
               "Get waiting / delayed / processing / completed / failed counts"
@@ -86,7 +119,10 @@
               "pause('queueName')",
               "Stop the processor from claiming new jobs from this queue"
             ],
-            ["resume('queueName')", "Resume processing for a paused queue"],
+            [
+              "resume('queueName')",
+              "Resume processing for a paused queue"
+            ],
             [
               "reset('queueName')",
               "Destructive: flush all jobs and state from the queue"
@@ -120,6 +156,10 @@
           "type": "code",
           "lang": "ts",
           "text": "// Subscribe to all terminal events\nconst off = management.events.job.finished((payload) => {\n  console.log(payload.jobId, payload.status);\n});\n\n// Subscribe to failures only\nmanagement.events.job.failed((payload) => {\n  alertTeam(`Job ${payload.jobId} failed: ${payload.error}`);\n});\n\n// Unsubscribe later\noff();"
+        },
+        {
+          "type": "tip",
+          "text": "Events are in-process by default — the worker that ran the job fires them. Pass a Broker to HoundApp to receive events from jobs that completed in other processes; see the Broker page."
         }
       ]
     }

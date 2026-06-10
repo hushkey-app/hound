@@ -40,6 +40,12 @@
               "Bearer token required by the HTTP gateway"
             ],
             [
+              "broker",
+              "Broker",
+              "undefined",
+              "Pub/sub bridge — makes job-finished events (emitAndWait, /events) work across processes"
+            ],
+            [
               "importMeta",
               "ImportMeta",
               "undefined",
@@ -88,6 +94,12 @@
               "number",
               "30000",
               "How long before a stalled job is reclaimed by the Reaper"
+            ],
+            [
+              "maxReclaims",
+              "number",
+              "5",
+              "Poison-pill defense — reclaims allowed before the Reaper marks the job failed"
             ],
             [
               "jobStateTtlSeconds",
@@ -160,6 +172,14 @@
         {
           "type": "tip",
           "text": "There is no separate dead-letter queue — failed jobs live in the regular state-key namespace and respect processor.jobStateTtlSeconds. A first-class DLQ with separate retention and bulk replay may be reintroduced as a feature; see ROADMAP.md."
+        },
+        {
+          "type": "p",
+          "text": "Jobs whose worker crashes mid-execution are recovered by the Reaper and re-executed (at-least-once delivery). Each recovery increments a reclaim counter; past processor.maxReclaims (default 5) the job is marked failed instead of requeued, with the reclaim history in its errors — a job that kills its worker on every attempt cannot loop forever."
+        },
+        {
+          "type": "warning",
+          "text": "Handlers that legitimately run longer than visibilityTimeoutMs will be treated as stalled: a duplicate execution starts and the reclaim counter ticks up. Size visibilityTimeoutMs above your slowest handler, and keep handlers idempotent."
         }
       ]
     }

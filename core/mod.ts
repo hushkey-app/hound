@@ -50,6 +50,8 @@ export type {
 } from './libs/hound-management/mod.ts';
 export { InMemoryStorage } from './libs/storage/in-memory.ts';
 export { DenoKvStorage } from './libs/storage/deno-kv.ts';
+export { Broker, JOB_FINISHED_CHANNEL } from './libs/broker/mod.ts';
+export type { BrokerConnection } from './libs/broker/mod.ts';
 export { generateClient, generateTypes } from './libs/codegen/mod.ts';
 export type { ClientgenOptions, CodegenOptions } from './libs/codegen/mod.ts';
 export { createGateway } from './libs/gateways/gateway.ts';
@@ -71,8 +73,9 @@ export type {
   // Handlers
   HandlerOptions,
   // Hound options
+  HoundBroker,
+  HoundMetrics,
   HoundOptions,
-  MiddlewareFn,
   JobContext,
   JobDefinition,
   JobError,
@@ -80,6 +83,8 @@ export type {
   // Job data (dashboard / log display)
   JobLog,
   JobSocketContext,
+  MiddlewareFn,
+  QueueMetrics,
   RedisConnection,
   RepeatOptions,
   // Processor config

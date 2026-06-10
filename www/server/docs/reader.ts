@@ -7,6 +7,7 @@ import queues from "./queues.json" with { type: "json" };
 import cronJobs from "./cron-jobs.json" with { type: "json" };
 import management from "./management.json" with { type: "json" };
 import gateway from "./gateway.json" with { type: "json" };
+import broker from "./broker.json" with { type: "json" };
 import storage from "./storage.json" with { type: "json" };
 import configuration from "./configuration.json" with { type: "json" };
 
@@ -48,6 +49,7 @@ const DOC_REGISTRY: Record<string, DocPage> = {
   "cron-jobs": cronJobs as unknown as DocPage,
   "management": management as unknown as DocPage,
   "gateway": gateway as unknown as DocPage,
+  "broker": broker as unknown as DocPage,
   "storage": storage as unknown as DocPage,
   "configuration": configuration as unknown as DocPage,
 };

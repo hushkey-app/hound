@@ -26,11 +26,11 @@ import type {
   JobDefinition,
 } from '../../types/index.ts';
 import type {
+  BoundEmitOptions,
   TypedEmit,
   TypedEmitAsync,
   TypedEmitBatch,
   TypedHound,
-  BoundEmitOptions,
 } from '../../mod.ts';
 
 /**
@@ -43,7 +43,10 @@ export type TypedJobContext<
   TJobMap extends object,
   TData = unknown,
 > =
-  & Omit<JobContext<TApp, TData>, 'emit' | 'emitAsync' | 'emitAndWait' | 'emitBatch'>
+  & Omit<
+    JobContext<TApp, TData>,
+    'emit' | 'emitAsync' | 'emitAndWait' | 'emitBatch'
+  >
   & {
     emit: TypedEmit<TJobMap>;
     emitAsync: TypedEmitAsync<TJobMap>;
@@ -81,11 +84,23 @@ export class HoundApp<
   readonly hound: TypedHound<TApp, TJobMap>;
   readonly management: HoundManagement;
   readonly defineJob: TypedDefineJob<TApp, TJobMap>;
+  readonly #hound: Hound<TApp>;
 
   constructor(options: HoundOptions<TApp>) {
     const _hound = Hound.create<TApp>(options);
+    this.#hound = _hound;
     this.hound = _hound as unknown as TypedHound<TApp, TJobMap>;
     this.management = new HoundManagement({ db: options.db, hound: _hound });
     this.defineJob = _defineJob as unknown as TypedDefineJob<TApp, TJobMap>;
+  }
+
+  /**
+   * Start the HTTP gateway with this app's management API already attached —
+   * /emit*, /events, and the full /management/* surface in one call.
+   * Equivalent to `hound.listen(port, app.management)`.
+   */
+  listen(port: number, onListen?: (addr: Deno.NetAddr) => void): this {
+    this.#hound.listen(port, this.management, onListen);
+    return this;
   }
 }

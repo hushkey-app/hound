@@ -8,6 +8,7 @@ import { Processor, shouldRetryJob } from '../processor/processor.ts';
 import { DebounceManager } from '../processor/debounce-manager.ts';
 import { QueueStore } from '../consumer/queue-store.ts';
 import { Reaper } from '../consumer/reaper.ts';
+import { JOB_FINISHED_CHANNEL } from '../broker/mod.ts';
 import { createGateway } from '../gateways/gateway.ts';
 import type { HoundManagement } from '../hound-management/mod.ts';
 import { debug } from '../../utils/logger.ts';
@@ -21,6 +22,8 @@ import type {
   EmitFunction,
   EmitOptions,
   HandlerOptions,
+  HoundBroker,
+  HoundMetrics,
   HoundOptions,
   JobContext,
   JobData,
@@ -30,6 +33,7 @@ import type {
   Message,
   MessageContext,
   MiddlewareFn,
+  QueueMetrics,
   RedisConnection,
 } from '../../types/index.ts';
 import {
@@ -110,7 +114,20 @@ export class Hound<
   private shutdownRegistered = false;
   private readonly signalHandlers = new Map<string, () => void>();
   private readonly auth?: string;
+  private readonly broker?: HoundBroker;
   private server?: ReturnType<typeof createGateway>;
+
+  // Identifies this process on the broker channel so events we published are
+  // not re-dispatched to our own listeners when they loop back.
+  readonly #instanceId = crypto.randomUUID();
+  #brokerUnsub?: () => void;
+
+  // Per-process counters for metrics() — completed/failed jobs by queue.
+  readonly #queueCounters = new Map<
+    string,
+    { completed: number; failed: number }
+  >();
+  readonly #startedAt = Date.now();
 
   readonly #jobFinishedListeners = new Set<
     (payload: {
@@ -153,8 +170,13 @@ export class Hound<
     };
 
     this.auth = options.auth;
+    this.broker = options.broker;
     this.importMeta = options.importMeta;
     this.jobDirs = options.jobDirs;
+
+    // Subscribe immediately (not in start()) so a gateway-only process that
+    // never runs workers still receives job-finished events from remote ones.
+    this.#ensureBrokerSubscription();
   }
 
   static create<TApp extends Record<string, unknown> = Record<string, unknown>>(
@@ -658,7 +680,31 @@ ${'─'.repeat(40)}
     return () => this.#jobFinishedListeners.delete(cb);
   }
 
+  /** Terminal event from a job THIS process ran: count, dispatch, fan out. */
   #notifyJobFinished(payload: {
+    jobId: string;
+    queue: string;
+    status: 'completed' | 'failed';
+    error?: string;
+  }): void {
+    let counters = this.#queueCounters.get(payload.queue);
+    if (!counters) {
+      counters = { completed: 0, failed: 0 };
+      this.#queueCounters.set(payload.queue, counters);
+    }
+    if (payload.status === 'completed') counters.completed++;
+    else counters.failed++;
+
+    this.#dispatchJobFinished(payload);
+    // Fire-and-forget fan-out so waiters/SSE in other processes see it too.
+    this.broker?.publish(JOB_FINISHED_CHANNEL, {
+      ...payload,
+      __origin: this.#instanceId,
+    });
+  }
+
+  /** Deliver to local listeners only — used for both local and remote events. */
+  #dispatchJobFinished(payload: {
     jobId: string;
     queue: string;
     status: 'completed' | 'failed';
@@ -671,6 +717,59 @@ ${'─'.repeat(40)}
         console.error(' jobFinished listener error:', err);
       }
     }
+  }
+
+  /** Feed remote job-finished events into local listeners; skip our own echoes. */
+  #ensureBrokerSubscription(): void {
+    if (!this.broker || this.#brokerUnsub) return;
+    this.#brokerUnsub = this.broker.subscribe(JOB_FINISHED_CHANNEL, (p) => {
+      const event = p as {
+        jobId?: string;
+        queue?: string;
+        status?: 'completed' | 'failed';
+        error?: string;
+        __origin?: string;
+      } | null;
+      if (!event?.jobId || !event.queue || !event.status) return;
+      if (event.__origin === this.#instanceId) return;
+      this.#dispatchJobFinished({
+        jobId: event.jobId,
+        queue: event.queue,
+        status: event.status,
+        error: event.error,
+      });
+    });
+  }
+
+  // ─── Metrics ──────────────────────────────────────────────────────────────
+
+  /**
+   * Live snapshot for observability. Queue lengths are read from storage;
+   * completed/failed are per-process counters since this instance started.
+   * Rendered as Prometheus text by the gateway's GET /metrics.
+   */
+  async metrics(): Promise<HoundMetrics> {
+    const names = new Set([...this.queues, ...this.#queueCounters.keys()]);
+    const queues: QueueMetrics[] = await Promise.all(
+      [...names].sort().map(async (name) => {
+        const counters = this.#queueCounters.get(name);
+        return {
+          name,
+          length: await this.queueStore.queueLength(name),
+          processing: await this.queueStore.processingCount(name),
+          completed: counters?.completed ?? 0,
+          failed: counters?.failed ?? 0,
+        };
+      }),
+    );
+    return {
+      uptimeSeconds: Math.floor((Date.now() - this.#startedAt) / 1000),
+      queues,
+      totals: {
+        completed: queues.reduce((s, q) => s + q.completed, 0),
+        failed: queues.reduce((s, q) => s + q.failed, 0),
+      },
+    };
   }
 
   // ─── Redis primitives ─────────────────────────────────────────────────────
@@ -851,8 +950,14 @@ ${'─'.repeat(40)}
       db: this.db,
       queues: allQueues,
       visibilityTimeoutMs: this.processorOptions?.visibilityTimeoutMs,
+      maxReclaims: this.processorOptions?.maxReclaims,
+      jobStateTtlSeconds: this.processorOptions?.jobStateTtlSeconds,
+      broker: this.broker,
     });
     this.reaper.start();
+
+    // Re-establish after a stop() — no-op when already subscribed.
+    this.#ensureBrokerSubscription();
 
     this.isStarted = true;
     this.#setupGracefulShutdown();
@@ -958,6 +1063,9 @@ ${'─'.repeat(40)}
 
     this.reaper?.stop();
     this.reaper = undefined;
+
+    this.#brokerUnsub?.();
+    this.#brokerUnsub = undefined;
 
     this.processor?.stop();
     if (this.processor) {

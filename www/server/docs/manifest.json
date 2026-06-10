@@ -44,19 +44,25 @@
   {
     "slug": "gateway",
     "title": "HTTP Gateway",
-    "description": "REST gateway, management endpoints, auth, and generated client",
+    "description": "REST gateway, wait/events endpoints, metrics, auth, CORS, and generated client",
     "order": 8
+  },
+  {
+    "slug": "broker",
+    "title": "Broker (Pub/Sub)",
+    "description": "Fire-and-forget Redis pub/sub primitive and cross-process job events",
+    "order": 9
   },
   {
     "slug": "storage",
     "title": "Storage Backends",
     "description": "Redis, in-memory, and Deno KV adapters",
-    "order": 9
+    "order": 10
   },
   {
     "slug": "configuration",
     "title": "Configuration",
     "description": "Full HoundOptions, processor, and retry reference",
-    "order": 10
+    "order": 11
   }
 ]

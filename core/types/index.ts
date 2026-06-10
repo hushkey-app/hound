@@ -401,6 +401,35 @@ export interface ProcessorOptions {
 
 // ─── Hound public options ──────────────────────────────────────────────────────
 
+/**
+ * Pub/sub surface Hound needs from a broker — satisfied by the Broker class.
+ * Structural so types/ stays free of lib imports.
+ */
+export interface HoundBroker {
+  publish(channel: string, payload: unknown): void;
+  subscribe(channel: string, cb: (payload: unknown) => void): () => void;
+}
+
+/** Per-queue snapshot returned by hound.metrics(). */
+export interface QueueMetrics {
+  name: string;
+  /** Jobs in the queue sorted set (waiting + delayed). Live read. */
+  length: number;
+  /** Jobs currently claimed (processing set). Live read. */
+  processing: number;
+  /** Jobs completed by this process since start. Counter, per-process. */
+  completed: number;
+  /** Jobs terminally failed by this process since start. Counter, per-process. */
+  failed: number;
+}
+
+/** Snapshot returned by hound.metrics(); rendered as Prometheus text by GET /metrics. */
+export interface HoundMetrics {
+  uptimeSeconds: number;
+  queues: QueueMetrics[];
+  totals: { completed: number; failed: number };
+}
+
 /** Options for Hound.create(). */
 export interface HoundOptions<
   TApp extends Record<string, unknown> = Record<string, unknown>,
@@ -439,6 +468,14 @@ export interface HoundOptions<
    * `Authorization: Bearer <token>` on all requests.
    */
   auth?: string;
+  /**
+   * Optional pub/sub broker for cross-process events. When set, job-finished
+   * events are published to (and consumed from) the 'hound:job.finished'
+   * channel, so emitAndWait and the gateway's /events stream work even when
+   * the job executes in a different process. Fire-and-forget — no persistence
+   * or replay; durable delivery stays with the job queue.
+   */
+  broker?: HoundBroker;
   processor?: {
     /** State key TTL in seconds. Required for production — prevents unbounded key growth. */
     jobStateTtlSeconds?: number;
@@ -448,6 +485,14 @@ export interface HoundOptions<
     pollIntervalMs?: number;
     /** How long before a stuck processing job is reclaimed by the Reaper. Default 30000ms. */
     visibilityTimeoutMs?: number;
+    /**
+     * Poison-pill defense: max times the Reaper will reclaim the same job
+     * before marking it failed instead of requeueing. Default 5. A job that
+     * crashes its worker on every attempt would otherwise loop forever.
+     * Legitimate jobs only hit this if they run longer than
+     * visibilityTimeoutMs — size that above your slowest handler.
+     */
+    maxReclaims?: number;
     /** Max messages to claim per poll cycle. Default 200. */
     claimCount?: number;
     retry?: RetryConfig;

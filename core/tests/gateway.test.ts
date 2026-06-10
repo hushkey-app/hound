@@ -325,11 +325,22 @@ Deno.test('GET /management/jobs/:queue/:jobId returns job', () =>
     assertEquals(job.id, 'job-1');
   }));
 
-Deno.test('GET /management/jobs/:queue/:jobId returns null for missing job', () =>
+Deno.test('GET /management/jobs/:queue/:jobId returns 404 for missing job', () =>
   withMgmtGateway(async (base) => {
     const res = await fetch(`${base}/management/jobs/default/ghost`);
-    assertEquals(res.status, 200);
-    assertEquals(await res.json(), null);
+    assertEquals(res.status, 404);
+    const body = await res.json() as any;
+    assert(body.error.includes('not found'));
+  }));
+
+Deno.test('POST /management/jobs/:queue/:jobId/pause returns 404 for missing job', () =>
+  withMgmtGateway(async (base) => {
+    const res = await fetch(`${base}/management/jobs/default/ghost/pause`, {
+      method: 'POST',
+      headers: H,
+    });
+    assertEquals(res.status, 404);
+    await res.body?.cancel();
   }));
 
 // ─── DELETE /management/jobs/:queue/:jobId ────────────────────────────────────
@@ -645,4 +656,126 @@ Deno.test('GET /management/jobs rejects non-integer limit with 400', () =>
     assertEquals(res.status, 400);
     const body = await res.json() as any;
     assert(body.error.includes('limit'));
+  }));
+
+// ─── Root index ───────────────────────────────────────────────────────────────
+
+Deno.test('GET / lists available endpoints', () =>
+  withGateway(mockHound(), undefined, async (base) => {
+    const res = await fetch(`${base}/`);
+    assertEquals(res.status, 200);
+    const body = await res.json() as { service: string; endpoints: string[] };
+    assertEquals(body.service, 'hound-gateway');
+    assert(body.endpoints.some((e) => e.includes('/emit/wait')));
+    // No management instance — management routes not advertised
+    assert(!body.endpoints.some((e) => e.includes('/management')));
+  }));
+
+Deno.test('unknown route returns JSON 404', () =>
+  withGateway(mockHound(), undefined, async (base) => {
+    const res = await fetch(`${base}/nope`);
+    assertEquals(res.status, 404);
+    const body = await res.json() as any;
+    assert(body.error.includes('not found'));
+  }));
+
+// ─── CORS ─────────────────────────────────────────────────────────────────────
+
+Deno.test('cors: OPTIONS preflight answered without auth, responses carry origin header', async () => {
+  const server = createGateway({
+    port: 0,
+    hound: mockHound(),
+    auth: 'secret-token',
+    cors: 'https://dash.example.com',
+  });
+  const base = `http://127.0.0.1:${(server.addr as Deno.NetAddr).port}`;
+  try {
+    // Preflight: no Authorization header, must still succeed
+    const pre = await fetch(`${base}/emit`, { method: 'OPTIONS' });
+    assertEquals(pre.status, 204);
+    assertEquals(
+      pre.headers.get('access-control-allow-origin'),
+      'https://dash.example.com',
+    );
+    assert(
+      pre.headers.get('access-control-allow-headers')?.includes(
+        'Authorization',
+      ),
+    );
+    await pre.body?.cancel();
+
+    // Actual request: auth enforced, response carries the origin header
+    const res = await fetch(`${base}/health`, {
+      headers: { Authorization: 'Bearer secret-token' },
+    });
+    assertEquals(res.status, 200);
+    assertEquals(
+      res.headers.get('access-control-allow-origin'),
+      'https://dash.example.com',
+    );
+    await res.body?.cancel();
+
+    const denied = await fetch(`${base}/health`);
+    assertEquals(denied.status, 401);
+    assertEquals(
+      denied.headers.get('access-control-allow-origin'),
+      'https://dash.example.com',
+    );
+    await denied.body?.cancel();
+  } finally {
+    await server.shutdown();
+  }
+});
+
+Deno.test('cors: true allows any origin', async () => {
+  const server = createGateway({ port: 0, hound: mockHound(), cors: true });
+  const base = `http://127.0.0.1:${(server.addr as Deno.NetAddr).port}`;
+  try {
+    const res = await fetch(`${base}/health`);
+    assertEquals(res.headers.get('access-control-allow-origin'), '*');
+    await res.body?.cancel();
+  } finally {
+    await server.shutdown();
+  }
+});
+
+Deno.test('cors off by default — no origin header', () =>
+  withGateway(mockHound(), undefined, async (base) => {
+    const res = await fetch(`${base}/health`);
+    assertEquals(res.headers.get('access-control-allow-origin'), null);
+    await res.body?.cancel();
+  }));
+
+// ─── GET /metrics ─────────────────────────────────────────────────────────────
+
+function mockMetricsHound() {
+  return {
+    metrics: async () => ({
+      uptimeSeconds: 5,
+      totals: { completed: 2, failed: 1 },
+      queues: [
+        { name: 'default', length: 3, processing: 1, completed: 2, failed: 1 },
+      ],
+    }),
+  } as any;
+}
+
+Deno.test('GET /metrics renders Prometheus text', () =>
+  withGateway(mockMetricsHound(), undefined, async (base) => {
+    const res = await fetch(`${base}/metrics`);
+    assertEquals(res.status, 200);
+    assert(res.headers.get('content-type')?.startsWith('text/plain'));
+    const body = await res.text();
+    assert(body.includes('hound_uptime_seconds 5'));
+    assert(body.includes('hound_queue_length{queue="default"} 3'));
+    assert(body.includes('hound_jobs_processing{queue="default"} 1'));
+    assert(body.includes('hound_jobs_completed_total{queue="default"} 2'));
+    assert(body.includes('hound_jobs_failed_total{queue="default"} 1'));
+  }));
+
+Deno.test('GET /metrics returns 501 when hound has no metrics()', () =>
+  withGateway(mockHound(), undefined, async (base) => {
+    const res = await fetch(`${base}/metrics`);
+    assertEquals(res.status, 501);
+    await res.body?.cancel();
   }));

@@ -1,4 +1,10 @@
-import { Hound, HoundApp, InMemoryStorage } from '@hushkey/hound/mod.ts';
+import {
+  Broker,
+  Hound,
+  HoundApp,
+  InMemoryStorage,
+} from '@hushkey/hound/mod.ts';
+import type { BrokerConnection } from '@hushkey/hound/mod.ts';
 import type { RedisConnection } from '@hushkey/hound/types/index.ts';
 import type { HoundJobMap } from '../gen/hound-types.ts';
 
@@ -30,6 +36,15 @@ if (REDIS_URL) {
   db = new InMemoryStorage();
 }
 
+// Broker — fire-and-forget pub/sub for live events, separate from durable
+// jobs. With Redis the subscriber connection is derived via duplicate();
+// InMemoryStorage delivers in-process. Deno KV has no pub/sub surface, so
+// the broker is skipped on that backend.
+export const broker =
+  typeof (db as Partial<BrokerConnection>).publish === 'function'
+    ? new Broker({ pub: db as unknown as BrokerConnection })
+    : undefined;
+
 const contextApp = {
   foo: 'bar',
 };
@@ -37,6 +52,9 @@ const contextApp = {
 const app = new HoundApp<typeof contextApp, HoundJobMap>({
   db,
   ctx: contextApp,
+  // With a broker, job-finished events cross process boundaries: emitAndWait
+  // and the gateway's /events stream see jobs completed by other workers.
+  broker,
   importMeta: import.meta,
   concurrency: 10,
   processor: {
@@ -48,7 +66,9 @@ const app = new HoundApp<typeof contextApp, HoundJobMap>({
   jobDirs: ['../_scheduled', '../_tasks'],
 });
 
-app.hound.listen(4000, app.management, (ctx) => {
+// app.listen() wires the management API into the gateway automatically.
+const PORT = Number(Deno.env.get('HOUND_PORT') ?? 4000);
+app.listen(PORT, (ctx) => {
   console.log(ctx.hostname, ctx.port, ctx.transport);
 });
 

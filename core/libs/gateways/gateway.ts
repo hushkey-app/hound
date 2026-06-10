@@ -2,12 +2,14 @@
  * HTTP gateway — exposes Hound over REST.
  *
  * Emit endpoints:
+ *   GET  /                                  — endpoint index
  *   POST /emit                              — emit a single job, returns { jobId }
  *   POST /emit/batch                        — emit multiple jobs, returns { jobIds }
  *   POST /emit/wait                         — emit and hold the connection until the job
  *                                             finishes; returns { jobId, status } (408 on wait timeout)
  *   GET  /events                            — SSE stream of job-finished events (query: queue)
  *   GET  /health                            — liveness check
+ *   GET  /metrics                           — Prometheus text: queue lengths + job counters
  *
  * Management endpoints (requires GatewayOptions.management):
  *   GET    /management/jobs                 — list jobs (query: queue, status, limit, offset)
@@ -27,7 +29,7 @@
  *
  * @module
  */
-import type { EmitOptions } from '../../types/index.ts';
+import type { EmitOptions, HoundMetrics } from '../../types/index.ts';
 import type { Hound } from '../hound/mod.ts';
 import type {
   FindJobsOptions,
@@ -55,6 +57,12 @@ export type GatewayOptions = {
   auth?: string;
   /** Max accepted request body size in bytes. Default 1 MiB. Oversized bodies get 413. */
   maxBodyBytes?: number;
+  /**
+   * CORS for browser clients. `true` allows any origin (`*`); a string allows
+   * that origin only. Adds the headers to every response and answers OPTIONS
+   * preflights (which browsers send without Authorization). Off by default.
+   */
+  cors?: boolean | string;
   /** Called once the server is bound and ready to accept connections. */
   onListen?: (addr: Deno.NetAddr) => void;
 };
@@ -125,105 +133,166 @@ export function createGateway(
   const { port, hostname = '0.0.0.0', hound, auth, management, onListen } =
     options;
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+  const corsOrigin = options.cors === true ? '*' : options.cors || undefined;
 
   // Open SSE connections — closed on shutdown so the server can actually
   // drain (Deno.serve's shutdown waits for in-flight responses to finish).
   const sseCleanups = new Set<() => void>();
 
+  const applyCors = (res: Response): Response => {
+    if (!corsOrigin) return res;
+    res.headers.set('Access-Control-Allow-Origin', corsOrigin);
+    return res;
+  };
+
+  const handle = async (req: Request): Promise<Response> => {
+    try {
+      const authError = checkAuth(req, auth);
+      if (authError) return authError;
+
+      const url = new URL(req.url);
+
+      if (req.method === 'GET' && url.pathname === '/') {
+        return json({
+          service: 'hound-gateway',
+          endpoints: [
+            'GET  /',
+            'GET  /health',
+            'GET  /metrics',
+            'GET  /events',
+            'POST /emit',
+            'POST /emit/batch',
+            'POST /emit/wait',
+            ...(management
+              ? [
+                'GET  /management/jobs',
+                'GET  /management/jobs/:queue/:jobId',
+                'DELETE /management/jobs/:queue/:jobId',
+                'POST /management/jobs/:queue/:jobId/{pause|resume|promote|retry}',
+                'GET  /management/queues',
+                'GET  /management/queues/:queue/stats',
+                'POST /management/queues/:queue/{pause|resume|reset}',
+              ]
+              : []),
+          ],
+        });
+      }
+
+      if (req.method === 'GET' && url.pathname === '/health') {
+        return json({ status: 'ok' });
+      }
+
+      if (req.method === 'GET' && url.pathname === '/metrics') {
+        if (typeof hound.metrics !== 'function') {
+          return json(
+            { error: 'metrics not supported by this hound instance' },
+            501,
+          );
+        }
+        return new Response(renderPrometheus(await hound.metrics()), {
+          headers: { 'Content-Type': 'text/plain; version=0.0.4' },
+        });
+      }
+
+      if (req.method === 'GET' && url.pathname === '/events') {
+        return handleEvents(url, hound, sseCleanups);
+      }
+
+      if (req.method === 'POST' && url.pathname === '/emit') {
+        const parsed = await readJson(req, maxBodyBytes);
+        if (!parsed.ok) return parsed.res;
+        const body = parsed.value as {
+          event: string;
+          data?: unknown;
+          options?: EmitOptions;
+        };
+        if (!body?.event) return json({ error: 'event is required' }, 400);
+        const jobId = await hound.emitAsync(
+          body.event,
+          body.data,
+          body.options,
+        );
+        return json({ jobId });
+      }
+
+      if (req.method === 'POST' && url.pathname === '/emit/batch') {
+        const parsed = await readJson(req, maxBodyBytes);
+        if (!parsed.ok) return parsed.res;
+        const jobs = parsed.value as Array<{
+          event: string;
+          data?: unknown;
+          options?: EmitOptions;
+        }>;
+        if (!Array.isArray(jobs)) {
+          return json({ error: 'body must be an array' }, 400);
+        }
+        for (let i = 0; i < jobs.length; i++) {
+          if (!jobs[i]?.event) {
+            return json({ error: `jobs[${i}].event is required` }, 400);
+          }
+        }
+        const jobIds = await hound.emitBatch(jobs);
+        return json({ jobIds });
+      }
+
+      if (req.method === 'POST' && url.pathname === '/emit/wait') {
+        const parsed = await readJson(req, maxBodyBytes);
+        if (!parsed.ok) return parsed.res;
+        const body = parsed.value as {
+          event: string;
+          data?: unknown;
+          options?: EmitOptions & { timeoutMs?: number };
+        };
+        if (!body?.event) return json({ error: 'event is required' }, 400);
+
+        const opts = body.options ?? {};
+        const timeoutMs = Math.min(opts.timeoutMs ?? 30_000, MAX_WAIT_MS);
+        // Pin the id so we can report it even when the job fails.
+        const jobId = opts.id ?? genJobIdSync(body.event, body.data ?? {});
+
+        try {
+          await hound.emitAndWait(body.event, body.data, {
+            ...opts,
+            id: jobId,
+            timeoutMs,
+          });
+          return json({ jobId, status: 'completed' });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          // Wait timeout ≠ job failure: the job may still be queued or running.
+          if (isTimeoutError(err)) return json({ jobId, error: msg }, 408);
+          return json({ jobId, status: 'failed', error: msg });
+        }
+      }
+
+      if (url.pathname.startsWith('/management')) {
+        if (!management) return json({ error: 'not found' }, 404);
+        return handleManagement(req, url, management);
+      }
+
+      return json({ error: 'not found' }, 404);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return json({ error: msg }, 500);
+    }
+  };
+
   const server = Deno.serve(
     { hostname, port, onListen },
     async (req: Request): Promise<Response> => {
-      try {
-        const authError = checkAuth(req, auth);
-        if (authError) return authError;
-
-        const url = new URL(req.url);
-
-        if (req.method === 'GET' && url.pathname === '/health') {
-          return json({ status: 'ok' });
-        }
-
-        if (req.method === 'GET' && url.pathname === '/events') {
-          return handleEvents(url, hound, sseCleanups);
-        }
-
-        if (req.method === 'POST' && url.pathname === '/emit') {
-          const parsed = await readJson(req, maxBodyBytes);
-          if (!parsed.ok) return parsed.res;
-          const body = parsed.value as {
-            event: string;
-            data?: unknown;
-            options?: EmitOptions;
-          };
-          if (!body?.event) return json({ error: 'event is required' }, 400);
-          const jobId = await hound.emitAsync(
-            body.event,
-            body.data,
-            body.options,
-          );
-          return json({ jobId });
-        }
-
-        if (req.method === 'POST' && url.pathname === '/emit/batch') {
-          const parsed = await readJson(req, maxBodyBytes);
-          if (!parsed.ok) return parsed.res;
-          const jobs = parsed.value as Array<{
-            event: string;
-            data?: unknown;
-            options?: EmitOptions;
-          }>;
-          if (!Array.isArray(jobs)) {
-            return json({ error: 'body must be an array' }, 400);
-          }
-          for (let i = 0; i < jobs.length; i++) {
-            if (!jobs[i]?.event) {
-              return json({ error: `jobs[${i}].event is required` }, 400);
-            }
-          }
-          const jobIds = await hound.emitBatch(jobs);
-          return json({ jobIds });
-        }
-
-        if (req.method === 'POST' && url.pathname === '/emit/wait') {
-          const parsed = await readJson(req, maxBodyBytes);
-          if (!parsed.ok) return parsed.res;
-          const body = parsed.value as {
-            event: string;
-            data?: unknown;
-            options?: EmitOptions & { timeoutMs?: number };
-          };
-          if (!body?.event) return json({ error: 'event is required' }, 400);
-
-          const opts = body.options ?? {};
-          const timeoutMs = Math.min(opts.timeoutMs ?? 30_000, MAX_WAIT_MS);
-          // Pin the id so we can report it even when the job fails.
-          const jobId = opts.id ?? genJobIdSync(body.event, body.data ?? {});
-
-          try {
-            await hound.emitAndWait(body.event, body.data, {
-              ...opts,
-              id: jobId,
-              timeoutMs,
-            });
-            return json({ jobId, status: 'completed' });
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            // Wait timeout ≠ job failure: the job may still be queued or running.
-            if (isTimeoutError(err)) return json({ jobId, error: msg }, 408);
-            return json({ jobId, status: 'failed', error: msg });
-          }
-        }
-
-        if (url.pathname.startsWith('/management')) {
-          if (!management) return new Response(null, { status: 404 });
-          return handleManagement(req, url, management);
-        }
-
-        return new Response(null, { status: 404 });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return json({ error: msg }, 500);
+      // Preflight first — browsers send OPTIONS without Authorization.
+      if (corsOrigin && req.method === 'OPTIONS') {
+        return new Response(null, {
+          status: 204,
+          headers: {
+            'Access-Control-Allow-Origin': corsOrigin,
+            'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+            'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+            'Access-Control-Max-Age': '86400',
+          },
+        });
       }
+      return applyCors(await handle(req));
     },
   );
 
@@ -239,6 +308,33 @@ export function createGateway(
       return shutdown();
     },
   });
+}
+
+// ─── Metrics ──────────────────────────────────────────────────────────────────
+
+function renderPrometheus(m: HoundMetrics): string {
+  const esc = (s: string) => s.replace(/(["\\])/g, '\\$1');
+  const lines: string[] = [
+    '# TYPE hound_uptime_seconds gauge',
+    `hound_uptime_seconds ${m.uptimeSeconds}`,
+    '# TYPE hound_queue_length gauge',
+    ...m.queues.map((q) =>
+      `hound_queue_length{queue="${esc(q.name)}"} ${q.length}`
+    ),
+    '# TYPE hound_jobs_processing gauge',
+    ...m.queues.map((q) =>
+      `hound_jobs_processing{queue="${esc(q.name)}"} ${q.processing}`
+    ),
+    '# TYPE hound_jobs_completed_total counter',
+    ...m.queues.map((q) =>
+      `hound_jobs_completed_total{queue="${esc(q.name)}"} ${q.completed}`
+    ),
+    '# TYPE hound_jobs_failed_total counter',
+    ...m.queues.map((q) =>
+      `hound_jobs_failed_total{queue="${esc(q.name)}"} ${q.failed}`
+    ),
+  ];
+  return lines.join('\n') + '\n';
 }
 
 // ─── SSE: job-finished events ─────────────────────────────────────────────────
@@ -340,23 +436,27 @@ async function handleManagement(
       }
       const key = `${queue}:${jobId}`;
 
+      // The jobs API returns null for unknown jobs — surface that as 404.
+      const jobOr404 = (job: JobRecord | null) =>
+        job ? json(job) : json({ error: 'job not found' }, 404);
+
       if (req.method === 'GET' && !action) {
-        return json(await m.api.jobs.get(key));
+        return jobOr404(await m.api.jobs.get(key));
       }
       if (req.method === 'DELETE' && !action) {
         return json({ deleted: await m.api.jobs.delete(key) });
       }
       if (req.method === 'POST' && action === 'pause') {
-        return json(await m.api.jobs.pause(key));
+        return jobOr404(await m.api.jobs.pause(key));
       }
       if (req.method === 'POST' && action === 'resume') {
-        return json(await m.api.jobs.resume(key));
+        return jobOr404(await m.api.jobs.resume(key));
       }
       if (req.method === 'POST' && action === 'promote') {
-        return json(await m.api.jobs.promote(key));
+        return jobOr404(await m.api.jobs.promote(key));
       }
       if (req.method === 'POST' && action === 'retry') {
-        return json(await m.api.jobs.retry(key));
+        return jobOr404(await m.api.jobs.retry(key));
       }
     }
 

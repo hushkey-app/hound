@@ -13,7 +13,10 @@
         },
         {
           "type": "table",
-          "headers": ["Adapter", "Use case"],
+          "headers": [
+            "Adapter",
+            "Use case"
+          ],
           "rows": [
             [
               "InMemoryStorage",
@@ -23,7 +26,10 @@
               "Redis (ioredis / deno-redis)",
               "Production, multi-worker, persistence required"
             ],
-            ["DenoKvStorage", "Deno Deploy and Deno KV-based environments"]
+            [
+              "DenoKvStorage",
+              "Deno Deploy and Deno KV-based environments"
+            ]
           ]
         }
       ]
@@ -78,6 +84,10 @@
           "type": "code",
           "lang": "ts",
           "text": "import { HoundApp, DenoKvStorage } from 'hound/';\n\nconst kv = await Deno.openKv();\nconst { hound } = new HoundApp({\n  db: new DenoKvStorage(kv),\n});"
+        },
+        {
+          "type": "warning",
+          "text": "DenoKvStorage is single-process only: the claim path reads then writes without a transaction, so two worker processes sharing one KV store can claim the same job twice. Run one Hound process per KV store; use the Redis backend for multi-worker deployments."
         }
       ]
     },

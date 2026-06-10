@@ -651,3 +651,26 @@ Deno.test('emitAndWait timeout rejects with a typed HoundTimeoutError', () =>
       .catch((e: Error) => e);
     assertEquals((err as Error).name, 'HoundTimeoutError');
   }));
+
+// ─── Metrics ──────────────────────────────────────────────────────────────────
+
+Deno.test('metrics() reports per-queue counters and live lengths', () =>
+  withHound(async (h) => {
+    h.on('metrics.ok', async () => {});
+    h.on('metrics.bad', async () => {
+      throw new Error('boom');
+    });
+    await h.start();
+
+    await h.emitAndWait('metrics.ok', {}, { timeoutMs: 3000 });
+    await h.emitAndWait('metrics.bad', {}, { timeoutMs: 3000 }).catch(() => {});
+
+    const m = await h.metrics();
+    const q = m.queues.find((q) => q.name === 'default');
+    assert(q, 'default queue should be reported');
+    assertEquals(q!.completed, 1);
+    assertEquals(q!.failed, 1);
+    assertEquals(m.totals.completed, 1);
+    assertEquals(m.totals.failed, 1);
+    assert(m.uptimeSeconds >= 0);
+  }));

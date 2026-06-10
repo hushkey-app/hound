@@ -244,26 +244,25 @@ class ManagementJobsClient {
   }
 
   async pause(queue: string, jobId: string): Promise<JobRecord | null> {
-    const res = await fetch(\`\${this._url}/management/jobs/\${queue}/\${jobId}/pause\`, { method: 'POST', headers: this._h });
-    if (!res.ok) throw await _mgmtError('management.jobs.pause', res);
-    return res.json();
+    return this.#action('pause', queue, jobId);
   }
 
   async resume(queue: string, jobId: string): Promise<JobRecord | null> {
-    const res = await fetch(\`\${this._url}/management/jobs/\${queue}/\${jobId}/resume\`, { method: 'POST', headers: this._h });
-    if (!res.ok) throw await _mgmtError('management.jobs.resume', res);
-    return res.json();
+    return this.#action('resume', queue, jobId);
   }
 
   async promote(queue: string, jobId: string): Promise<JobRecord | null> {
-    const res = await fetch(\`\${this._url}/management/jobs/\${queue}/\${jobId}/promote\`, { method: 'POST', headers: this._h });
-    if (!res.ok) throw await _mgmtError('management.jobs.promote', res);
-    return res.json();
+    return this.#action('promote', queue, jobId);
   }
 
   async retry(queue: string, jobId: string): Promise<JobRecord | null> {
-    const res = await fetch(\`\${this._url}/management/jobs/\${queue}/\${jobId}/retry\`, { method: 'POST', headers: this._h });
-    if (!res.ok) throw await _mgmtError('management.jobs.retry', res);
+    return this.#action('retry', queue, jobId);
+  }
+
+  async #action(action: string, queue: string, jobId: string): Promise<JobRecord | null> {
+    const res = await fetch(\`\${this._url}/management/jobs/\${queue}/\${jobId}/\${action}\`, { method: 'POST', headers: this._h });
+    if (res.status === 404) { await res.body?.cancel(); return null; }
+    if (!res.ok) throw await _mgmtError(\`management.jobs.\${action}\`, res);
     return res.json();
   }
 }
@@ -378,6 +377,43 @@ export class HoundClient {
       throw new Error(\`[hound-client] job failed: \${body.error ?? 'unknown error'}\`);
     }
     return body.jobId!;
+  }
+
+  /**
+   * Subscribe to job-finished events (SSE over fetch, so auth headers work —
+   * native EventSource cannot send them). Returns an unsubscribe function.
+   */
+  onJobFinished(
+    cb: (payload: { jobId: string; queue: string; status: 'completed' | 'failed'; error?: string }) => void,
+    options?: { queue?: string; onError?: (err: Error) => void },
+  ): () => void {
+    const ctrl = new AbortController();
+    const qs = options?.queue ? \`?queue=\${encodeURIComponent(options.queue)}\` : '';
+    (async () => {
+      try {
+        const res = await fetch(\`\${this.#url}/events\${qs}\`, { headers: this.#headers, signal: ctrl.signal });
+        if (!res.ok || !res.body) throw new Error(\`[hound-client] events failed: \${res.status}\`);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const frames = buf.split('\\n\\n');
+          buf = frames.pop() ?? '';
+          for (const frame of frames) {
+            const data = frame.split('\\n').find((l) => l.startsWith('data: '));
+            if (data) cb(JSON.parse(data.slice(6)));
+          }
+        }
+      } catch (err) {
+        if (!ctrl.signal.aborted) {
+          options?.onError?.(err instanceof Error ? err : new Error(String(err)));
+        }
+      }
+    })();
+    return () => ctrl.abort();
   }
 }
 `;

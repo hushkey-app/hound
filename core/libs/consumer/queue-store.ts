@@ -110,6 +110,11 @@ export class QueueStore {
     return await this.db.zcard(this.#qKey(queue));
   }
 
+  /** Number of jobs currently claimed (processing set). */
+  async processingCount(queue: string): Promise<number> {
+    return await this.db.zcard(this.#pKey(queue));
+  }
+
   /** All jobIds in the processing set with score older than `olderThanMs`. */
   async stalledJobs(queue: string, olderThanMs: number): Promise<string[]> {
     const cutoff = Date.now() - olderThanMs;

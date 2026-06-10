@@ -62,7 +62,10 @@ class InMemoryPipeline {
       try {
         results.push([null, await op()]);
       } catch (err) {
-        results.push([err instanceof Error ? err : new Error(String(err)), null]);
+        results.push([
+          err instanceof Error ? err : new Error(String(err)),
+          null,
+        ]);
       }
     }
     return results;
@@ -196,7 +199,10 @@ export class InMemoryStorage {
     let n = 0;
     for (const m of members) {
       const idx = z.findIndex((e) => e.member === m);
-      if (idx !== -1) { z.splice(idx, 1); n++; }
+      if (idx !== -1) {
+        z.splice(idx, 1);
+        n++;
+      }
     }
     return n;
   }
@@ -213,7 +219,11 @@ export class InMemoryStorage {
   // ─── Eval — implements only the QueueStore claim Lua pattern ───────────────
 
   // deno-lint-ignore no-explicit-any
-  async eval(_script: string, _numkeys: number, ...args: any[]): Promise<unknown> {
+  async eval(
+    _script: string,
+    _numkeys: number,
+    ...args: any[]
+  ): Promise<unknown> {
     // Matches CLAIM_SCRIPT args: qKey, pKey, now, count, claimedAt
     const qKey = String(args[0]);
     const pKey = String(args[1]);
@@ -254,6 +264,42 @@ export class InMemoryStorage {
     return ['0', [...new Set([...kvKeys, ...zKeys])]];
   }
 
+  // ─── Pub/Sub — in-process delivery, used by Broker in tests ────────────────
+
+  readonly #subscribedChannels = new Set<string>();
+  readonly #messageListeners = new Set<
+    (channel: string, message: string) => void
+  >();
+
+  async publish(channel: string, message: string): Promise<number> {
+    if (!this.#subscribedChannels.has(channel)) return 0;
+    const listeners = [...this.#messageListeners];
+    // Deliver async like a real transport would — callers must not rely on
+    // synchronous delivery.
+    queueMicrotask(() => {
+      for (const cb of listeners) cb(channel, message);
+    });
+    return listeners.length;
+  }
+
+  async subscribe(...channels: string[]): Promise<void> {
+    for (const ch of channels) this.#subscribedChannels.add(ch);
+  }
+
+  async unsubscribe(...channels: string[]): Promise<void> {
+    for (const ch of channels) this.#subscribedChannels.delete(ch);
+  }
+
+  on(event: 'message', cb: (channel: string, message: string) => void): this {
+    if (event === 'message') this.#messageListeners.add(cb);
+    return this;
+  }
+
+  /** Pub and sub share the same in-process registry — return self. */
+  duplicate(): this {
+    return this;
+  }
+
   // ─── Pipeline / Multi ──────────────────────────────────────────────────────
 
   pipeline(): InMemoryPipeline {
@@ -288,7 +334,9 @@ export class InMemoryStorage {
   }
 
   /** @internal */
-  _restore(snapshot: { kv: Map<string, KvEntry>; zsets: Map<string, ZEntry[]> }): void {
+  _restore(
+    snapshot: { kv: Map<string, KvEntry>; zsets: Map<string, ZEntry[]> },
+  ): void {
     this.#kv.clear();
     for (const [k, v] of snapshot.kv) this.#kv.set(k, v);
     this.#zsets.clear();

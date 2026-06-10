@@ -1,7 +1,7 @@
 {
   "slug": "gateway",
   "title": "HTTP Gateway",
-  "description": "REST gateway, management endpoints, auth, and generated client",
+  "description": "REST gateway, wait/events endpoints, metrics, auth, CORS, and generated client",
   "sections": [
     {
       "id": "overview",
@@ -9,63 +9,114 @@
       "blocks": [
         {
           "type": "p",
-          "text": "Hound includes a built-in HTTP gateway that exposes emit and management endpoints over REST. It lets external services emit jobs without a direct Redis connection and provides a browser-friendly management interface."
-        }
-      ]
-    },
-    {
-      "id": "listen",
-      "heading": "hound.listen()",
-      "blocks": [
-        {
-          "type": "p",
-          "text": "Start the gateway via hound.listen(). HoundApp bundles a HoundManagement instance you can hand straight to listen() to expose the management endpoints:"
-        },
-        {
-          "type": "code",
-          "lang": "ts",
-          "text": "import { HoundApp } from 'hound/';\n\nconst { hound, management } = new HoundApp({\n  db: redis,\n  auth: 'my-secret-token',\n});\n\nawait hound.start();\nhound.listen(4000, management, () => console.log('Gateway on :4000'));"
-        },
-        {
-          "type": "p",
-          "text": "Or use createGateway() for more control over hostname and options:"
-        },
-        {
-          "type": "code",
-          "lang": "ts",
-          "text": "import { createGateway } from 'hound/';\n\ncreateGateway({\n  port: 4000,\n  hostname: '0.0.0.0',\n  hound,\n  management,\n  auth: 'my-secret-token',\n});"
-        }
-      ]
-    },
-    {
-      "id": "emit-endpoints",
-      "heading": "Emit endpoints",
-      "blocks": [
-        {
-          "type": "p",
-          "text": "These endpoints are always available, regardless of whether management is enabled:"
+          "text": "Hound includes a built-in HTTP gateway that exposes the full surface over REST: emit (fire-and-forget, batch, and blocking wait), a live job-finished event stream (SSE), Prometheus metrics, and the management API. External services emit jobs without a direct Redis connection; browsers can talk to it directly with CORS enabled."
         },
         {
           "type": "table",
           "headers": ["Method", "Path", "Description"],
           "rows": [
-            ["GET", "/health", "Returns { status: 'ok' }"],
-            [
-              "POST",
-              "/emit",
-              "Emit a single job — body: { event, data?, options? }"
-            ],
-            [
-              "POST",
-              "/emit/batch",
-              "Emit multiple jobs — body: [{ event, data?, options? }]"
-            ]
+            ["GET", "/", "Endpoint index — lists every route the gateway serves"],
+            ["GET", "/health", "Liveness check — returns { status: 'ok' }"],
+            ["GET", "/metrics", "Prometheus text: queue lengths, processing counts, job counters"],
+            ["GET", "/events", "SSE stream of job-finished events (query: queue)"],
+            ["POST", "/emit", "Emit a single job — body: { event, data?, options? }"],
+            ["POST", "/emit/batch", "Emit multiple jobs — body: [{ event, data?, options? }]"],
+            ["POST", "/emit/wait", "Emit and hold the connection until the job finishes"]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "listen",
+      "heading": "Starting the gateway",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The shortest path is app.listen() — it wires the app's management API into the gateway automatically:"
+        },
+        {
+          "type": "code",
+          "lang": "ts",
+          "text": "import { HoundApp } from 'hound/';\n\nconst app = new HoundApp({ db: redis, auth: 'my-secret-token' });\n\nawait app.hound.start();\napp.listen(4000, (addr) => console.log(`Gateway on :${addr.port}`));"
+        },
+        {
+          "type": "p",
+          "text": "hound.listen() works too when you want to pass the management instance explicitly, and createGateway() gives full control over hostname, CORS, and body limits:"
+        },
+        {
+          "type": "code",
+          "lang": "ts",
+          "text": "import { createGateway } from 'hound/';\n\ncreateGateway({\n  port: 4000,\n  hostname: '0.0.0.0',\n  hound,\n  management,\n  auth: 'my-secret-token',\n  cors: 'https://dashboard.example.com', // or true for any origin\n  maxBodyBytes: 1_048_576, // default 1 MiB; oversized bodies get 413\n});"
+        }
+      ]
+    },
+    {
+      "id": "emit-wait",
+      "heading": "POST /emit/wait — blocking emit",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The HTTP equivalent of emitAndWait(): the connection is held open until the job reaches a terminal state. The response tells you how it ended:"
+        },
+        {
+          "type": "table",
+          "headers": ["Outcome", "Status", "Body"],
+          "rows": [
+            ["Job completed", "200", "{ jobId, status: 'completed' }"],
+            ["Job failed", "200", "{ jobId, status: 'failed', error }"],
+            ["Wait timed out", "408", "{ jobId, error }"]
           ]
         },
         {
           "type": "code",
           "lang": "sh",
-          "text": "curl -X POST http://localhost:4000/emit \\\n  -H 'Content-Type: application/json' \\\n  -H 'Authorization: Bearer my-secret-token' \\\n  -d '{\"event\": \"email.send\", \"data\": {\"to\": \"leo@example.com\"}}'"
+          "text": "curl -X POST http://localhost:4000/emit/wait \\\n  -H 'Content-Type: application/json' \\\n  -H 'Authorization: Bearer my-secret-token' \\\n  -d '{\"event\": \"report.build\", \"data\": {\"id\": 7}, \"options\": {\"timeoutMs\": 15000}}'"
+        },
+        {
+          "type": "warning",
+          "text": "A 408 means the wait window expired — the job may still be queued or running. The server caps the wait at 120s regardless of the requested timeoutMs."
+        },
+        {
+          "type": "tip",
+          "text": "When the gateway runs in a different process than the workers, configure a Broker on both sides so job-finished events reach the gateway — see the Broker page."
+        }
+      ]
+    },
+    {
+      "id": "events",
+      "heading": "GET /events — SSE stream",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Server-Sent Events stream of every job that reaches a terminal state. Each message is event: job.finished with a JSON payload { jobId, queue, status, error? }. Filter to one queue with ?queue=name."
+        },
+        {
+          "type": "code",
+          "lang": "sh",
+          "text": "curl -N http://localhost:4000/events?queue=payments \\\n  -H 'Authorization: Bearer my-secret-token'"
+        },
+        {
+          "type": "p",
+          "text": "The stream sends a heartbeat comment every 15s to keep proxies from closing idle connections, and open streams are closed cleanly on server shutdown."
+        }
+      ]
+    },
+    {
+      "id": "metrics",
+      "heading": "GET /metrics — Prometheus",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Standard Prometheus text exposition. Queue lengths and processing counts are live reads from storage; completed/failed are per-process counters since the instance started."
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "text": "# TYPE hound_uptime_seconds gauge\nhound_uptime_seconds 3600\n# TYPE hound_queue_length gauge\nhound_queue_length{queue=\"default\"} 12\n# TYPE hound_jobs_processing gauge\nhound_jobs_processing{queue=\"default\"} 3\n# TYPE hound_jobs_completed_total counter\nhound_jobs_completed_total{queue=\"default\"} 4096\n# TYPE hound_jobs_failed_total counter\nhound_jobs_failed_total{queue=\"default\"} 17"
+        },
+        {
+          "type": "tip",
+          "text": "The same snapshot is available programmatically via await hound.metrics() — useful for custom dashboards without scraping."
         }
       ]
     },
@@ -75,52 +126,49 @@
       "blocks": [
         {
           "type": "p",
-          "text": "Available when a HoundManagement instance is passed to the gateway:"
+          "text": "Available when a HoundManagement instance is passed to the gateway (app.listen() does this for you):"
         },
         {
           "type": "table",
           "headers": ["Method", "Path", "Description"],
           "rows": [
-            ["GET", "/management/jobs", "List jobs (query: queue, status)"],
-            ["GET", "/management/jobs/:queue/:jobId", "Get a single job"],
+            ["GET", "/management/jobs", "List jobs (query: queue, status, limit, offset)"],
+            ["GET", "/management/jobs/:queue/:jobId", "Get a single job — 404 if missing"],
             ["DELETE", "/management/jobs/:queue/:jobId", "Delete a job"],
             ["POST", "/management/jobs/:queue/:jobId/pause", "Pause a job"],
             ["POST", "/management/jobs/:queue/:jobId/resume", "Resume a job"],
-            [
-              "POST",
-              "/management/jobs/:queue/:jobId/promote",
-              "Promote a delayed job"
-            ],
-            [
-              "POST",
-              "/management/jobs/:queue/:jobId/retry",
-              "Retry a failed job"
-            ],
+            ["POST", "/management/jobs/:queue/:jobId/promote", "Promote a delayed job"],
+            ["POST", "/management/jobs/:queue/:jobId/retry", "Retry a failed job"],
             ["GET", "/management/queues", "List all queues"],
             ["GET", "/management/queues/:queue/stats", "Get queue stats"],
             ["POST", "/management/queues/:queue/pause", "Pause a queue"],
             ["POST", "/management/queues/:queue/resume", "Resume a queue"],
             ["POST", "/management/queues/:queue/reset", "Reset (flush) a queue"]
           ]
+        },
+        {
+          "type": "p",
+          "text": "Paginate listings with limit and offset — applied after sorting (newest first) and filtering:"
+        },
+        {
+          "type": "code",
+          "lang": "sh",
+          "text": "curl 'http://localhost:4000/management/jobs?queue=payments&status=failed&limit=20&offset=40'"
         }
       ]
     },
     {
       "id": "auth",
-      "heading": "Authentication",
+      "heading": "Auth, CORS, and limits",
       "blocks": [
         {
           "type": "p",
-          "text": "Set the auth option on new HoundApp() to require a Bearer token on all gateway requests:"
+          "text": "Set the auth option to require a Bearer token on all gateway requests. The comparison is constant-time:"
         },
         {
           "type": "code",
           "lang": "ts",
-          "text": "const { hound } = new HoundApp({\n  db: redis,\n  auth: Deno.env.get('HOUND_TOKEN'),\n});"
-        },
-        {
-          "type": "p",
-          "text": "Clients must include the token in the Authorization header:"
+          "text": "const app = new HoundApp({\n  db: redis,\n  auth: Deno.env.get('HOUND_TOKEN'),\n});"
         },
         {
           "type": "code",
@@ -130,6 +178,10 @@
         {
           "type": "warning",
           "text": "Without auth, any service that can reach the gateway port can emit jobs and access management endpoints."
+        },
+        {
+          "type": "p",
+          "text": "For browser clients, set cors on createGateway() — true allows any origin, a string allows that origin only. OPTIONS preflights are answered without auth (browsers do not send Authorization on preflight). Request bodies are capped at maxBodyBytes (default 1 MiB) and oversized requests get 413."
         }
       ]
     },
@@ -139,21 +191,21 @@
       "blocks": [
         {
           "type": "p",
-          "text": "Hound can generate a typed TypeScript client from your registered job definitions. The client wraps the HTTP gateway and provides the same type safety as direct hound.emit() calls:"
+          "text": "generateClient() writes a typed HoundClient that wraps the gateway with the same type safety as direct hound.emit() calls. It is fully portable — no Deno, Hound, or Redis dependency, just fetch:"
         },
         {
           "type": "code",
           "lang": "ts",
-          "text": "import { generateClient } from 'hound/';\n\n// Run once to generate the client file\nawait generateClient(hound, {\n  outputPath: './gen/hound-client.ts',\n  gatewayUrl: 'http://localhost:4000',\n  token: Deno.env.get('HOUND_TOKEN'),\n});"
+          "text": "import { generateClient } from 'hound/';\n\n// Run once (e.g. as part of deno task codegen)\nconst here = new URL('.', import.meta.url).pathname;\nawait generateClient({ outputDir: '../gen' }, here);"
+        },
+        {
+          "type": "code",
+          "lang": "ts",
+          "text": "import { HoundClient } from './gen/hound-client.ts';\n\nconst client = new HoundClient('http://localhost:4000', {\n  auth: Deno.env.get('HOUND_TOKEN'),\n});\n\n// Typed against HoundJobMap\nawait client.emit('email.send', { to: 'leo@example.com' });\nawait client.emitBatch([{ event: 'email.send', data: { to: 'a@b.c' } }]);\n\n// Blocking — resolves on completion, throws on failure or timeout\nawait client.emitAndWait('report.build', { id: 7 }, { timeoutMs: 15_000 });\n\n// Live job-finished events over SSE; returns an unsubscribe fn\nconst unsub = client.onJobFinished((e) => {\n  console.log(e.jobId, e.status);\n}, { queue: 'payments' });"
         },
         {
           "type": "p",
-          "text": "The generated client is self-contained — no Hound or Redis dependency. Import it anywhere to emit jobs over HTTP:"
-        },
-        {
-          "type": "code",
-          "lang": "ts",
-          "text": "import { houndClient } from './gen/hound-client.ts';\n\nawait houndClient.emit('email.send', { to: 'leo@example.com' });"
+          "text": "The client also exposes the full management API: client.management.jobs.find({ limit: 20 }), .get(), .delete(), .pause(), .resume(), .promote(), .retry(), and client.management.queues.find(), .stats(), .pause(), .resume(), .reset(). Missing jobs come back as null (mapped from the gateway's 404)."
         }
       ]
     }

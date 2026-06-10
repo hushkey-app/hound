@@ -1,0 +1,104 @@
+{
+  "slug": "broker",
+  "title": "Broker (Pub/Sub)",
+  "description": "Fire-and-forget Redis pub/sub primitive and cross-process job events",
+  "sections": [
+    {
+      "id": "overview",
+      "heading": "Broker vs Hound",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "The Broker is a generic Redis pub/sub primitive — fire-and-forget fan-out, deliberately separate from Hound's durable job execution. They solve different problems and do not overlap:"
+        },
+        {
+          "type": "table",
+          "headers": ["", "Broker", "Hound"],
+          "rows": [
+            ["Model", "Pub/sub fan-out", "Durable job queue"],
+            ["Delivery", "Whoever is listening right now", "Exactly the registered handler"],
+            ["Crash behaviour", "Subscriber misses messages — by design", "Reaper recovers and re-executes"],
+            ["Retry / replay", "None", "Retries, backoff, reaping"],
+            ["State", "Zero — nothing stored", "State keys + sorted sets"],
+            ["Use for", "Live UI updates, cache busts, signals", "Emails, payments, syncs, crons"]
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "Rule of thumb: if a missed message matters, it's a job — use Hound. If a missed message is irrelevant the moment the listener is gone (a disconnected dashboard doesn't need the update), it's an event — use the Broker."
+        }
+      ]
+    },
+    {
+      "id": "usage",
+      "heading": "publish / subscribe",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "One Broker instance owns the subscriber dispatcher and a ref-counted channel registry: the first listener on a channel subscribes it on Redis, the last one leaving unsubscribes it. With ioredis, pass the main connection as pub — the subscriber connection is derived via duplicate(), since a Redis connection in subscriber mode cannot run normal commands:"
+        },
+        {
+          "type": "code",
+          "lang": "ts",
+          "text": "import { Broker } from 'hound/';\n\nconst broker = new Broker({ pub: redis }); // sub derived via redis.duplicate()\n\n// Typed subscribe — returns an unsubscribe fn\nconst unsub = broker.subscribe<Booking>('bookings:org:42', (b) => {\n  render(b);\n});\n\n// Fire-and-forget — never throws, never blocks the write path\nbroker.publish('bookings:org:42', booking);\n\nunsub(); // last listener leaving tears down the Redis subscription"
+        },
+        {
+          "type": "p",
+          "text": "Domain wrappers stay tiny — encode the channel scheme once and export named helpers:"
+        },
+        {
+          "type": "code",
+          "lang": "ts",
+          "text": "// bookings.broker.ts — the whole file\nconst ch = (orgId: string) => `bookings:org:${orgId}`;\n\nexport const subscribeToOrgBookings = (orgId: string, cb: (b: Booking) => void) =>\n  broker.subscribe<Booking>(ch(orgId), cb);\n\nexport const publishBookingChange = (b: Booking) =>\n  broker.publish(ch(b.organisation_id), b);"
+        },
+        {
+          "type": "warning",
+          "text": "publish() swallows serialization and transport errors by design — it must never poison the code path that called it. If you need confirmation of delivery, you wanted a job, not an event."
+        }
+      ]
+    },
+    {
+      "id": "cross-process-events",
+      "heading": "Cross-process job events",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Job-finished notifications (emitAndWait, management.events, the gateway's /events stream) are in-process by default: the worker that ran the job is the one that notifies. When your gateway and workers are different processes or machines, pass a Broker to Hound on both sides — terminal job events are then published to the hound:job.finished channel and consumed from it:"
+        },
+        {
+          "type": "code",
+          "lang": "ts",
+          "text": "import { Broker, HoundApp } from 'hound/';\n\nconst broker = new Broker({ pub: redis });\n\nconst app = new HoundApp({\n  db: redis,\n  broker, // job-finished events now cross process boundaries\n});"
+        },
+        {
+          "type": "list",
+          "items": [
+            "emitAndWait() on the gateway box resolves when a worker box completes the job",
+            "GET /events streams completions from every worker, not just the local one",
+            "Jobs dead-lettered by the Reaper (poison cutoff) are announced too",
+            "Events you published yourself are not re-delivered locally — each instance tags its messages with an origin id and skips its own echoes"
+          ]
+        },
+        {
+          "type": "tip",
+          "text": "The channel name is exported as JOB_FINISHED_CHANNEL if you want to subscribe to job events directly from non-Hound code."
+        }
+      ]
+    },
+    {
+      "id": "testing",
+      "heading": "Testing without Redis",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "InMemoryStorage implements the pub/sub surface in-process, so brokers work in tests with no Redis:"
+        },
+        {
+          "type": "code",
+          "lang": "ts",
+          "text": "import { Broker, InMemoryStorage } from 'hound/';\n\nconst db = new InMemoryStorage();\nconst broker = new Broker({ pub: db });\n\nconst got: unknown[] = [];\nbroker.subscribe('ch', (p) => got.push(p));\nbroker.publish('ch', { hello: 'world' });"
+        }
+      ]
+    }
+  ]
+}
