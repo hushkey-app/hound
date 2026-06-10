@@ -17,6 +17,7 @@
     "dev": "deno run -A --watch --env-file='../.env' index.ts",
     "start": "deno run -A --env-file='../.env' index.ts",
     "benchmark": "deno run -A --env-file='../.env' benchmark.ts",
+    "benchmark:broker": "deno run -A --env-file='../.env' benchmark-broker.ts",
     "codegen": "deno run -A plugins/codegen.plugin.ts"
   },
   "fmt": {
