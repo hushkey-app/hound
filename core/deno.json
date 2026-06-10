@@ -11,9 +11,6 @@
   "tasks": {
     "test": "deno test -A tests/"
   },
-  "imports": {
-    "ioredis": "npm:ioredis@^5.10.0"
-  },
   "publish": {
     "exclude": [
       ".github/",
